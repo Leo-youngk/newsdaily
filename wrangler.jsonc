@@ -22,6 +22,13 @@
   ],
   "vars": {
     "AI_MODEL": "gpt-4o-mini",
-    "AI_FALLBACK_MODEL": ""
+    "AI_FALLBACK_MODEL": "",
+    // 允许调用 AI 与读写配置的前端来源（逗号分隔）。
+    // /data/* 是公开只读数据，不受此限制。
+    "CORS_ORIGIN": "https://news-pwa.pages.dev"
   }
+  // 需要用 `wrangler secret put` 配置的（不要写进本文件）：
+  //   ADMIN_TOKEN   AI 调用与配置写入的令牌，未配置时 /api/ai/* 与 PUT /api/config 一律 503
+  //   AI_BASE_URL   OpenAI 兼容端点
+  //   AI_API_KEY
 }

@@ -18,19 +18,31 @@ export interface Env extends AiEnv {
 
 const app = new Hono<{ Bindings: Env }>();
 
+/**
+ * CORS 分两级：
+ *   /data/* 与 /api/health 是公开只读内容，放开任意来源 —— 收紧它没有安全收益，
+ *     反而会在 CORS_ORIGIN 忘配时让整个前端读不到数据。
+ *   其余（AI 调用、配置读写）必须落在 CORS_ORIGIN 白名单里。
+ *     此前这里反射任意 Origin，等于任何网站都能从浏览器直接驱动本 Worker。
+ */
 app.use('/*', async (c, next) => {
+  const path = c.req.path;
+  const isPublicRead =
+    c.req.method === 'GET' && (path.startsWith('/data/') || path === '/api/health');
+
+  if (isPublicRead) {
+    return cors({ origin: '*', allowMethods: ['GET', 'OPTIONS'], maxAge: 86400 })(c, next);
+  }
+
   const allow = (c.env.CORS_ORIGIN ?? '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
   return cors({
-    // 不再反射任意 Origin：此前任何网站都能从浏览器直接调用本 Worker
-    origin: (origin) => {
-      if (!origin) return undefined;
-      if (allow.length === 0) return undefined;
-      if (allow.includes('*') || allow.includes(origin)) return origin;
-      return undefined;
-    },
+    origin: (origin) =>
+      origin && allow.length > 0 && (allow.includes('*') || allow.includes(origin))
+        ? origin
+        : undefined,
     allowHeaders: ['Content-Type', 'x-admin-token'],
     allowMethods: ['GET', 'POST', 'PUT', 'OPTIONS'],
     maxAge: 86400,
