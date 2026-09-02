@@ -3,7 +3,7 @@ import { config, assertCloudflareCreds } from './config.js';
 import { hasFfmpeg, segmentsToHtml, transcribeAudio } from './whisper.js';
 import { readingMinutes } from './util.js';
 import * as store from './upload.js';
-import type { Item, ItemDetail, TranscribeQueue, TranscribeTask } from './types.js';
+import type { Item, ItemDetail, TranscribeQueue } from './types.js';
 
 /**
  * 转写工作流入口，与采集分开跑。
@@ -21,22 +21,82 @@ async function loadQueue(): Promise<TranscribeQueue> {
   return (await store.readQueue()) ?? { updatedAt: 0, tasks: [] };
 }
 
-/** 转写完成后把条目在它所属的日期分片里更新掉 */
-async function patchShard(task: TranscribeTask, contentLen: number, minutes: number): Promise<void> {
-  const items = await store.readItems(task.date);
-  if (!items.length) return;
-  let touched = false;
-  const next = items.map((it: Item) => {
-    if (it.id !== task.id) return it;
-    touched = true;
-    return {
-      ...it,
-      contentLen,
-      contentSource: 'transcript-whisper' as const,
-      readingMinutes: minutes,
-    };
-  });
-  if (touched) await store.writeItems(task.date, next);
+interface Completed {
+  id: string;
+  date: string;
+  contentLen: number;
+  minutes: number;
+}
+
+/**
+ * 把转写结果批量回填到日期分片。
+ *
+ * 必须批量：原来每转完一条就对同一个分片对象做一次 read-modify-write，
+ * 实测两条连续转写只有一条落库——另一条的正文躺在 detail/ 里，
+ * 条目却永远显示"转写中"。改为按日期分组，一次读、一次写。
+ *
+ * 同时做对账：分片里凡是还标着 pending-transcript、但 detail 已经存在的，
+ * 一并修好。这样历史上漏掉的回填会在下一次运行自动愈合。
+ */
+async function patchShards(completed: Completed[]): Promise<void> {
+  const byDate = new Map<string, Completed[]>();
+  for (const c of completed) {
+    const arr = byDate.get(c.date) ?? [];
+    arr.push(c);
+    byDate.set(c.date, arr);
+  }
+
+  // 对账范围要覆盖所有出现过 pending 的分片，不只是本轮转写的
+  const queue = await loadQueue();
+  for (const t of queue.tasks) if (!byDate.has(t.date)) byDate.set(t.date, []);
+
+  for (const [date, list] of byDate) {
+    const items = await store.readItems(date);
+    if (!items.length) {
+      console.warn(`[warn] 分片 items/${date}.json 读不到，跳过回填`);
+      continue;
+    }
+    const done = new Map(list.map((c) => [c.id, c]));
+    let patched = 0;
+    let healed = 0;
+
+    const next: Item[] = [];
+    for (const it of items) {
+      const c = done.get(it.id);
+      if (c) {
+        patched++;
+        next.push({
+          ...it,
+          contentLen: c.contentLen,
+          contentSource: 'transcript-whisper',
+          readingMinutes: c.minutes,
+        });
+        continue;
+      }
+      // 对账：标着待转写但 detail 已存在的，说明上一轮回填漏了
+      if (it.contentSource === 'pending-transcript') {
+        const d = await store.readDetail(it.id);
+        if (d?.contentText) {
+          healed++;
+          next.push({
+            ...it,
+            contentLen: d.contentText.length,
+            contentSource: 'transcript-whisper',
+            readingMinutes: readingMinutes(d.contentText, it.lang),
+          });
+          continue;
+        }
+      }
+      next.push(it);
+    }
+
+    if (patched || healed) {
+      await store.writeItems(date, next);
+      console.log(
+        `[patch] ${date}：回填 ${patched} 条${healed ? `，对账修复 ${healed} 条` : ''}`,
+      );
+    }
+  }
 }
 
 async function main(): Promise<void> {
@@ -60,6 +120,7 @@ async function main(): Promise<void> {
 
   let usedMinutes = 0;
   const done = new Set<string>();
+  const completed: Completed[] = [];
   const startedAt = Date.now();
 
   for (const task of pending) {
@@ -87,7 +148,7 @@ async function main(): Promise<void> {
         extractedAt: Date.now(),
       };
       await store.writeDetail(detail);
-      await patchShard(task, t.text.length, minutes);
+      completed.push({ id: task.id, date: task.date, contentLen: t.text.length, minutes });
 
       usedMinutes += t.audioMinutes;
       done.add(task.id);
@@ -101,6 +162,9 @@ async function main(): Promise<void> {
       console.warn(`[fail] ${task.title.slice(0, 40)}：${msg}`);
     }
   }
+
+  // 先批量回填（含对账），再更新队列
+  await patchShards(completed);
 
   // 成功的移出队列；失败次数用尽的也移出，避免反复烧额度
   const remaining = queue.tasks.filter((t) => !done.has(t.id) && t.attempts < MAX_ATTEMPTS);

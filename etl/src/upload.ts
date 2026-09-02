@@ -93,6 +93,10 @@ export async function writeDetail(detail: ItemDetail): Promise<void> {
   await putJson(`detail/${detail.id}.json`, detail);
 }
 
+export async function readDetail(id: string): Promise<ItemDetail | null> {
+  return await getJson<ItemDetail>(`detail/${id}.json`);
+}
+
 export async function writeIndex(index: LatestIndex): Promise<void> {
   await putJson('index/latest.json', index);
 }
