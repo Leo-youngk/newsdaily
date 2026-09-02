@@ -21,8 +21,8 @@
     }
   ],
   "vars": {
-    "AI_MODEL": "gpt-4o-mini",
-    "AI_FALLBACK_MODEL": "",
+    "AI_MODEL": "glm-5.3-flash",
+    "AI_FALLBACK_MODEL": "deepseek-v4-flash",
     // 允许调用 AI 与读写配置的前端来源（逗号分隔）。
     // /data/* 是公开只读数据，不受此限制。
     "CORS_ORIGIN": "https://newsdaily-pti.pages.dev"
