@@ -9,7 +9,11 @@ const KEY = {
   sort: 'np-sort',
   autoTranslate: 'np-auto-translate',
   categoryOrder: 'np-category-order',
+  fontScale: 'np-font-scale',
 };
+
+/** 阅读字号档位 */
+export type FontScale = 's' | 'm' | 'l' | 'xl';
 
 function readSet(key: string): Set<string> {
   try {
@@ -92,6 +96,13 @@ export const prefs = {
     v
       ? localStorage.setItem(KEY.autoTranslate, '1')
       : localStorage.removeItem(KEY.autoTranslate);
+  },
+  getFontScale(): FontScale {
+    const v = localStorage.getItem(KEY.fontScale) as FontScale | null;
+    return v && ['s', 'm', 'l', 'xl'].includes(v) ? v : 'm';
+  },
+  setFontScale(v: FontScale): void {
+    localStorage.setItem(KEY.fontScale, v);
   },
   getCategoryOrder(): string[] | null {
     try {

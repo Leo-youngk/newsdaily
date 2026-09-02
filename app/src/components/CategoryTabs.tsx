@@ -9,7 +9,7 @@ interface Props {
 export default function CategoryTabs({ categories, active, counts, onChange }: Props) {
   return (
     <nav
-      className="no-scrollbar flex gap-1 overflow-x-auto px-1"
+      className="no-scrollbar allow-pan-x flex gap-1 overflow-x-auto px-1"
       aria-label="分类"
     >
       {categories.map((c) => {

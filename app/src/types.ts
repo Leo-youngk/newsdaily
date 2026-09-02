@@ -1,28 +1,59 @@
-// 与 ETL 数据契约一致的前端类型
+// 与 etl/src/types.ts 保持一致的数据契约
 
-export type ItemKind = 'deep' | 'keyword' | 'hot';
-export type ImageSource =
-  | 'media'
-  | 'enclosure'
-  | 'html-first-img'
-  | 'og-image'
+export type Category = '访谈' | 'AI' | '科技' | '商业' | '思想';
+
+export const CATEGORIES: Category[] = ['访谈', 'AI', '科技', '商业', '思想'];
+
+export type Lang = 'zh' | 'en';
+
+export type Readable = 'full' | 'transcript' | 'extract';
+
+export type ContentSource =
+  | 'feed'
+  | 'transcript-tag'
+  | 'transcript-page'
+  | 'extract'
   | 'none';
+
+export interface TranscriptRule {
+  from?: string;
+  to?: string;
+}
+
+export interface SourceConfig {
+  id: string;
+  name: string;
+  url: string;
+  category: Category;
+  lang: Lang;
+  readable: Readable;
+  transcript?: TranscriptRule;
+  enabled: boolean;
+  limit: number;
+  minChars: number;
+  dropUnreadable?: boolean;
+  expectedDomain?: string;
+  keywords?: string[];
+  note?: string;
+}
 
 export interface Item {
   id: string;
   sourceId: string;
   sourceName: string;
-  kind: ItemKind;
-  category: string;
+  category: Category;
+  lang: Lang;
   title: string;
   titleZh?: string;
   summary?: string;
   url: string;
-  image?: string; // 形如 /data/img/{md5}.webp
-  imageSource: ImageSource;
+  image?: string;
   publishedAt: number;
   contentLen: number;
-  hot?: number;
+  contentSource: ContentSource;
+  readingMinutes: number;
+  audioUrl?: string;
+  durationSec?: number;
   tags: string[];
 }
 
@@ -34,7 +65,24 @@ export interface ItemDetail {
   sourceName: string;
   contentHtml: string;
   contentText: string;
+  contentSource: ContentSource;
   extractedAt: number;
+}
+
+export interface AppSettings {
+  density: 'compact' | 'standard';
+  sort: 'time' | 'source';
+  darkMode: 'system' | 'light' | 'dark';
+  autoTranslate: boolean;
+  categoryOrder: Category[];
+}
+
+export interface AppConfig {
+  version: number;
+  updatedAt: number;
+  categories: Record<Category, boolean>;
+  settings: AppSettings;
+  sources: SourceConfig[];
 }
 
 export interface LatestIndex {
@@ -42,35 +90,11 @@ export interface LatestIndex {
   categories: Record<string, string[]>;
   all: string[];
   itemCount: number;
-  dates?: string[]; // R2 内存在的 items 日期分片（倒序）
+  dates: string[];
+  readableRate: number;
 }
 
-export interface SourceConfig {
-  id: string;
-  name: string;
-  url: string;
-  type: 'rss' | 'gnews';
-  category: string;
-  kind: ItemKind;
-  enabled: boolean;
-  limit: number;
-  expectedDomain?: string;
-  offlineReading?: boolean;
-  keywords?: string[];
-}
-
-export interface AppConfig {
-  version: number;
-  updatedAt: number;
-  contentTypes: { deep: boolean; keyword: boolean; hot: boolean };
-  settings: {
-    density: 'compact' | 'standard';
-    sort: 'time' | 'source';
-    darkMode: 'system' | 'light' | 'dark';
-    aiModel: string;
-    summaryLength: number;
-    autoTranslate: boolean;
-    categoryOrder: string[];
-  };
-  sources: SourceConfig[];
+/** 这条内容是不是逐字稿（决定卡片与阅读页的呈现方式） */
+export function isTranscript(item: Item): boolean {
+  return item.contentSource === 'transcript-tag' || item.contentSource === 'transcript-page';
 }

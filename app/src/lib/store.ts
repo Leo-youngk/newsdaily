@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { dataApi } from './api';
 import type { Item, LatestIndex } from '../types';
 
@@ -48,15 +48,22 @@ export interface NewsState {
 }
 
 export function useNews(): NewsState {
-  const snap = loadSnapshot();
-  const [items, setItems] = useState<Item[]>(snap?.items ?? []);
-  const [index, setIndex] = useState<LatestIndex | null>(snap?.index ?? null);
+  // 惰性初始化：原来每次 render 都同步 JSON.parse 整包快照（几百 KB），
+  // 打字搜索、切分类、滚动引发的重渲染全都要付这个成本
+  const snapRef = useRef<Snapshot | null | undefined>(undefined);
+  if (snapRef.current === undefined) snapRef.current = loadSnapshot();
+  const snap = snapRef.current;
+
+  const [items, setItems] = useState<Item[]>(() => snap?.items ?? []);
+  const [index, setIndex] = useState<LatestIndex | null>(() => snap?.index ?? null);
   const [loading, setLoading] = useState<boolean>(!snap);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<number>(snap?.savedAt ?? 0);
   const [fromCache, setFromCache] = useState<boolean>(!!snap);
 
+  const lastRef = useRef(0);
   const refresh = useCallback(async () => {
+    lastRef.current = Date.now();
     setLoading(true);
     setError(null);
     try {
@@ -96,11 +103,20 @@ export function useNews(): NewsState {
 
   useEffect(() => {
     void refresh();
-    // 每 5 分钟静默刷新一次
-    const t = setInterval(() => void refresh(), 5 * 60 * 1000);
-    return () => clearInterval(t);
+    // 只在页面可见时刷新：后台标签页里定时拉取纯属浪费
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && Date.now() - lastRef.current > 5 * 60 * 1000) {
+        void refresh();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    const t = setInterval(onVisible, 5 * 60 * 1000);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      clearInterval(t);
+    };
   }, [refresh]);
 
-  const byId = new Map(items.map((i) => [i.id, i]));
+  const byId = useMemo(() => new Map(items.map((i) => [i.id, i])), [items]);
   return { items, byId, index, loading, error, lastUpdated, fromCache, refresh };
 }

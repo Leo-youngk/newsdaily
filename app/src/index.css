@@ -20,6 +20,13 @@
     @apply dark:bg-[#14130f] dark:text-[#ece8e1];
     -webkit-tap-highlight-color: transparent;
     text-rendering: optimizeLegibility;
+    /* iOS Safari 不支持 overscroll-behavior，横向滑动只能靠 touch-action 拦 */
+    touch-action: pan-y;
+    overscroll-behavior: none;
+  }
+  /* 分类 Tab 那条横向滚动区要单独放行 */
+  .allow-pan-x {
+    touch-action: pan-x;
   }
   /* 细腻的滚动条 */
   * {

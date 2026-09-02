@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { AppConfig, Item } from '../../types';
+import { CATEGORIES, type AppConfig, type Category, type Item } from '../../types';
 import { dataApi, putConfig } from '../../lib/api';
 import { prefs, applyTheme, type ThemeMode } from '../../lib/prefs';
 import { validateKeywords, previewCount } from '../../lib/filter';
@@ -7,24 +7,29 @@ import SourceManager, { Toggle } from './SourceManager';
 
 interface Props {
   items: Item[];
+  density: 'compact' | 'standard';
+  sort: 'time' | 'source';
+  onDensity: (v: 'compact' | 'standard') => void;
+  onSort: (v: 'time' | 'source') => void;
 }
 
-const KIND_LABEL: Record<string, string> = {
-  deep: '深度资讯',
-  keyword: '关键词源',
-  hot: '热榜（需自部署 NewsNow）',
+const CATEGORY_HINT: Record<Category, string> = {
+  访谈: '长对话逐字稿：80,000 Hours、Dwarkesh、Lex Fridman 等',
+  AI: 'AI 研究与工程：Latent Space、Import AI、机器之心等',
+  科技: '科技产业与深度报道：ChinaTalk、MIT TR、Asianometry',
+  商业: '商业与经济：The Diff、Noahpinion、财新',
+  思想: '观点与叙事：Astral Codex Ten、One Useful Thing',
 };
 
-export default function SettingsView({ items }: Props) {
+export default function SettingsView({ items, density, sort, onDensity, onSort }: Props) {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [token, setToken] = useState(prefs.getAdminToken());
   const [theme, setTheme] = useState<ThemeMode>(prefs.getTheme());
-  const [density, setDensity] = useState(prefs.getDensity());
-  const [sort, setSort] = useState(prefs.getSort());
-  const [kwSourceId, setKwSourceId] = useState<string>('');
+  const [kwSourceId, setKwSourceId] = useState('');
   const [kwText, setKwText] = useState('');
 
   useEffect(() => {
@@ -42,26 +47,31 @@ export default function SettingsView({ items }: Props) {
       .finally(() => setLoading(false));
   }, []);
 
-  const kwSource = useMemo(
-    () => config?.sources.find((s) => s.id === kwSourceId) ?? null,
-    [config, kwSourceId],
-  );
+  const patch = (next: AppConfig) => {
+    setConfig(next);
+    setDirty(true);
+  };
+
   const kwList = useMemo(
     () => kwText.split('\n').map((x) => x.trim()).filter(Boolean),
     [kwText],
   );
   const kwValidation = validateKeywords(kwList);
-  const kwPreview = kwSource ? previewCount(items, kwList) : 0;
+  // 命中预览只统计所选源的条目 —— 原来统计全部条目，数字有误导
+  const kwScope = useMemo(
+    () => items.filter((i) => i.sourceId === kwSourceId),
+    [items, kwSourceId],
+  );
+  const kwPreview = previewCount(kwScope, kwList);
 
   const selectKwSource = (id: string) => {
     setKwSourceId(id);
-    const s = config?.sources.find((x) => x.id === id);
-    setKwText((s?.keywords ?? []).join('\n'));
+    setKwText((config?.sources.find((x) => x.id === id)?.keywords ?? []).join('\n'));
   };
 
-  const updateKeywords = () => {
+  const commitKeywords = () => {
     if (!config) return;
-    setConfig({
+    patch({
       ...config,
       sources: config.sources.map((s) =>
         s.id === kwSourceId ? { ...s, keywords: kwList } : s,
@@ -73,7 +83,7 @@ export default function SettingsView({ items }: Props) {
     setTheme(m);
     prefs.setTheme(m);
     applyTheme(m);
-    if (config) setConfig({ ...config, settings: { ...config.settings, darkMode: m } });
+    if (config) patch({ ...config, settings: { ...config.settings, darkMode: m } });
   };
 
   const save = async () => {
@@ -93,6 +103,7 @@ export default function SettingsView({ items }: Props) {
     try {
       await putConfig(next, token.trim());
       setConfig(next);
+      setDirty(false);
       setMsg({ kind: 'ok', text: '已保存到云端，将于下次抓取生效（每 2 小时一次）' });
     } catch (e) {
       setMsg({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
@@ -111,28 +122,40 @@ export default function SettingsView({ items }: Props) {
   if (!config)
     return <div className="p-6 text-center text-sm text-ink-muted">无法加载配置</div>;
 
+  const enabledCount = config.sources.filter(
+    (s) => s.enabled && config.categories[s.category] !== false,
+  ).length;
+
   return (
-    <div className="mx-auto max-w-feed space-y-8 px-4 pb-28 pt-4 sm:px-6">
-      {/* 1. 内容类型 */}
+    <div className="mx-auto max-w-feed space-y-8 px-4 pb-32 pt-4 sm:px-6">
+      {/* 1. 分类 */}
       <section>
-        <h3 className="title-serif mb-3 text-base font-bold">内容类型</h3>
+        <h3 className="title-serif mb-1 text-base font-bold">分类</h3>
+        <p className="mb-3 text-xs text-ink-muted dark:text-[#9a9387]">
+          关掉的分类下所有源都不再采集。当前启用 {enabledCount} 个源。
+        </p>
         <ul className="divide-y divide-line overflow-hidden rounded-2xl border hairline dark:divide-[#2a2823]">
-          {(['deep', 'keyword', 'hot'] as const).map((k) => (
-            <li key={k} className="flex items-center gap-3 bg-paper-card px-3.5 py-3 dark:bg-[#1b1a16]">
+          {CATEGORIES.map((k) => (
+            <li key={k} className="flex items-start gap-3 bg-paper-card px-3.5 py-3 dark:bg-[#1b1a16]">
               <Toggle
-                checked={config.contentTypes[k]}
+                checked={config.categories[k] !== false}
                 onChange={(v) =>
-                  setConfig({ ...config, contentTypes: { ...config.contentTypes, [k]: v } })
+                  patch({ ...config, categories: { ...config.categories, [k]: v } })
                 }
               />
-              <span className="text-sm">{KIND_LABEL[k]}</span>
+              <div className="min-w-0">
+                <div className="text-sm font-medium">{k}</div>
+                <div className="text-[0.7rem] leading-relaxed text-ink-faint">
+                  {CATEGORY_HINT[k]}
+                </div>
+              </div>
             </li>
           ))}
         </ul>
       </section>
 
       {/* 2. 源管理 */}
-      <SourceManager config={config} onChange={setConfig} />
+      <SourceManager config={config} onChange={patch} />
 
       {/* 3. 关键词过滤 */}
       <section>
@@ -149,32 +172,31 @@ export default function SettingsView({ items }: Props) {
           ))}
         </select>
         <textarea
-          className="input min-h-[120px] font-mono text-[0.82rem] leading-relaxed"
+          className="input min-h-[110px] font-mono text-[0.82rem] leading-relaxed"
           value={kwText}
           onChange={(e) => setKwText(e.target.value)}
-          onBlur={updateKeywords}
+          onBlur={commitKeywords}
           placeholder={'AI\n+OpenAI\n!广告\n@20'}
         />
         <div className="mt-2 flex items-center justify-between text-xs">
           <span className={kwValidation.ok ? 'text-ink-muted' : 'text-accent'}>
             {kwValidation.message}
           </span>
-          <span className="text-ink-faint">当前列表命中 {kwPreview} 条</span>
+          <span className="text-ink-faint">
+            该源当前 {kwScope.length} 条中命中 {kwPreview} 条
+          </span>
         </div>
       </section>
 
-      {/* 4. 显示与 AI */}
+      {/* 4. 显示 */}
       <section className="space-y-4">
-        <h3 className="title-serif text-base font-bold">显示与 AI</h3>
+        <h3 className="title-serif text-base font-bold">显示</h3>
 
         <Field label="排版密度">
           <Segmented
             value={density}
             options={[['standard', '标准'], ['compact', '紧凑']]}
-            onChange={(v) => {
-              setDensity(v as 'standard' | 'compact');
-              prefs.setDensity(v as 'standard' | 'compact');
-            }}
+            onChange={(v) => onDensity(v as 'standard' | 'compact')}
           />
         </Field>
 
@@ -182,10 +204,7 @@ export default function SettingsView({ items }: Props) {
           <Segmented
             value={sort}
             options={[['time', '时间'], ['source', '来源']]}
-            onChange={(v) => {
-              setSort(v as 'time' | 'source');
-              prefs.setSort(v as 'time' | 'source');
-            }}
+            onChange={(v) => onSort(v as 'time' | 'source')}
           />
         </Field>
 
@@ -197,46 +216,7 @@ export default function SettingsView({ items }: Props) {
           />
         </Field>
 
-        <Field label="AI 模型名">
-          <input
-            className="input"
-            value={config.settings.aiModel}
-            placeholder="gpt-4o-mini（留空用 Worker 默认）"
-            onChange={(e) =>
-              setConfig({ ...config, settings: { ...config.settings, aiModel: e.target.value } })
-            }
-          />
-        </Field>
-
-        <Field label={`摘要长度：${config.settings.summaryLength} 字`}>
-          <input
-            type="range"
-            min={80}
-            max={300}
-            step={10}
-            value={config.settings.summaryLength}
-            onChange={(e) =>
-              setConfig({
-                ...config,
-                settings: { ...config.settings, summaryLength: +e.target.value },
-              })
-            }
-            className="w-full accent-[#c05621]"
-          />
-        </Field>
-
-        <div className="flex items-center gap-3">
-          <Toggle
-            checked={config.settings.autoTranslate}
-            onChange={(v) => {
-              prefs.setAutoTranslate(v);
-              setConfig({ ...config, settings: { ...config.settings, autoTranslate: v } });
-            }}
-          />
-          <span className="text-sm">自动翻译英文标题</span>
-        </div>
-
-        <Field label="管理令牌（保存配置用）">
+        <Field label="管理令牌（保存配置与调用 AI 都需要）">
           <input
             className="input font-mono text-xs"
             type="password"
@@ -247,15 +227,18 @@ export default function SettingsView({ items }: Props) {
         </Field>
       </section>
 
-      {/* 保存条 */}
       <div className="sticky bottom-16 z-10 -mx-4 border-t hairline bg-paper/90 px-4 py-3 backdrop-blur dark:bg-[#14130f]/90 sm:mx-0 sm:rounded-2xl sm:border sm:px-5">
         {msg && (
           <p className={`mb-2 text-xs ${msg.kind === 'ok' ? 'text-ink-muted' : 'text-accent'}`}>
             {msg.text}
           </p>
         )}
-        <button className="btn-primary w-full" onClick={save} disabled={saving}>
-          {saving ? '保存中…' : '保存到云端'}
+        <button
+          className={`w-full ${dirty || saving ? 'btn-primary' : 'btn-outline text-ink-faint'}`}
+          onClick={save}
+          disabled={saving || !dirty}
+        >
+          {saving ? '保存中…' : dirty ? '保存到云端' : '没有待保存的改动'}
         </button>
       </div>
     </div>

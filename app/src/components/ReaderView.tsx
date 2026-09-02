@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import type { Item, ItemDetail } from '../types';
-import { dataApi, resolveImage } from '../lib/api';
-import { summarize, translate, type AiResult } from '../lib/ai';
-import { fullDate, categoryColor } from '../lib/format';
-import Thumb from './Thumb';
+import { isTranscript, type Item, type ItemDetail } from '../types';
+import { dataApi } from '../lib/api';
+import { summarize, translateBody, translateTitle, type AiResult } from '../lib/ai';
+import { fullDate, categoryColor, readingLabel } from '../lib/format';
+import { prefs, type FontScale } from '../lib/prefs';
 
 interface Props {
   item: Item;
@@ -24,20 +24,25 @@ function useAi() {
     const result = await fn();
     setState({ status: result.error ? 'error' : 'done', result });
   };
-  return { ...state, run, reset: () => setState({ status: 'idle', result: {} }) };
+  return { ...state, run };
 }
 
-/** 正文阅读页 + AI 摘要/翻译块 */
+const SCALE_CLASS: Record<FontScale, string> = {
+  s: 'text-[0.98rem]',
+  m: 'text-[1.0625rem]',
+  l: 'text-[1.15rem]',
+  xl: 'text-[1.28rem]',
+};
+
 export default function ReaderView({ item, onClose, favorite, onToggleFavorite }: Props) {
   const [detail, setDetail] = useState<ItemDetail | null>(null);
-  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [loadingDetail, setLoadingDetail] = useState(item.contentLen > 0);
+  const [scale, setScale] = useState<FontScale>(() => prefs.getFontScale());
   const summary = useAi();
   const titleTr = useAi();
   const bodyTr = useAi();
 
   useEffect(() => {
-    window.scrollTo(0, 0);
-    document.body.style.overflow = 'hidden';
     let alive = true;
     if (item.contentLen > 0) {
       setLoadingDetail(true);
@@ -49,17 +54,15 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
     }
     return () => {
       alive = false;
-      document.body.style.overflow = '';
     };
   }, [item.id, item.contentLen]);
 
-  const bodyText = detail?.contentText ?? item.summary ?? '';
+  const transcript = isTranscript(item);
 
   return (
-    <div className="fixed inset-0 z-40 overflow-y-auto bg-paper dark:bg-[#14130f]">
-      {/* 顶栏 */}
+    <div className="fixed inset-0 z-40 touch-pan-y overflow-y-auto overscroll-y-contain bg-paper dark:bg-[#14130f]">
       <header className="sticky top-0 z-10 border-b hairline bg-paper/85 pt-safe backdrop-blur-md dark:bg-[#14130f]/85">
-        <div className="mx-auto flex max-w-reading items-center gap-2 px-4 py-2.5">
+        <div className="mx-auto flex max-w-reading items-center gap-1 px-4 py-2.5">
           <button onClick={onClose} className="btn-ghost -ml-1.5" aria-label="返回">
             <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
               <path d="M15 19l-7-7 7-7" />
@@ -68,22 +71,35 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
           <div className="flex-1 truncate text-xs text-ink-muted dark:text-[#9a9387]">
             {item.sourceName}
           </div>
-          <a
-            href={item.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn-ghost"
-            aria-label="打开原文"
-          >
+
+          {/* 字号：长文阅读器该有的选择权 */}
+          <div className="flex items-center rounded-full border hairline">
+            {(['s', 'm', 'l', 'xl'] as FontScale[]).map((s) => (
+              <button
+                key={s}
+                onClick={() => {
+                  setScale(s);
+                  prefs.setFontScale(s);
+                }}
+                aria-label={`字号 ${s}`}
+                aria-pressed={scale === s}
+                className={`px-2 py-1 text-[0.7rem] transition-colors first:rounded-l-full last:rounded-r-full ${
+                  scale === s
+                    ? 'bg-accent-wash font-semibold text-accent dark:bg-[#241d16]'
+                    : 'text-ink-faint'
+                }`}
+              >
+                A
+              </button>
+            ))}
+          </div>
+
+          <a href={item.url} target="_blank" rel="noopener noreferrer" className="btn-ghost" aria-label="打开原文">
             <svg viewBox="0 0 24 24" className="h-[18px] w-[18px]" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
               <path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />
             </svg>
           </a>
-          <button
-            onClick={() => onToggleFavorite(item.id)}
-            className="btn-ghost"
-            aria-label={favorite ? '取消收藏' : '收藏'}
-          >
+          <button onClick={() => onToggleFavorite(item.id)} className="btn-ghost" aria-label={favorite ? '取消收藏' : '收藏'}>
             <svg viewBox="0 0 24 24" className={`h-[18px] w-[18px] ${favorite ? 'fill-accent text-accent' : 'fill-none text-ink-muted'}`} stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round">
               <path d="M6 4h12v17l-6-4.2L6 21z" />
             </svg>
@@ -92,27 +108,47 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
       </header>
 
       <article className="mx-auto max-w-reading px-5 pb-24 pt-6">
-        <div className="mb-3 flex items-center gap-2 text-xs text-ink-muted dark:text-[#9a9387]">
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-ink-muted dark:text-[#9a9387]">
           <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: categoryColor(item.category) }} />
           <span className="font-medium">{item.category}</span>
           <span className="text-ink-faint">·</span>
           <span>{fullDate(item.publishedAt)}</span>
+          {item.readingMinutes > 0 && (
+            <>
+              <span className="text-ink-faint">·</span>
+              <span>{readingLabel(item.readingMinutes)}</span>
+            </>
+          )}
+          {transcript && (
+            <span className="chip bg-accent-wash px-2 py-0 text-accent dark:bg-[#241d16]">逐字稿</span>
+          )}
         </div>
 
         <h1 className="title-serif text-[1.75rem] font-bold leading-tight">
           {item.titleZh || item.title}
         </h1>
 
-        {/* AI 操作条 */}
+        {/* 播客：正文是逐字稿，但音频也该能边听边读 */}
+        {item.audioUrl && (
+          <audio
+            controls
+            preload="none"
+            src={item.audioUrl}
+            className="mt-4 w-full"
+          />
+        )}
+
         <div className="mt-4 flex flex-wrap gap-2">
-          <button className="btn-outline" onClick={() => summary.run(() => summarize(item.id, bodyText))} disabled={!bodyText}>
+          <button className="btn-outline" onClick={() => summary.run(() => summarize(item.id))} disabled={!item.contentLen}>
             <Dot status={summary.status} /> 生成摘要
           </button>
-          <button className="btn-outline" onClick={() => titleTr.run(() => translate(item.id, item.title, 'title'))}>
-            <Dot status={titleTr.status} /> 翻译标题
-          </button>
-          {bodyText && (
-            <button className="btn-outline" onClick={() => bodyTr.run(() => translate(item.id, bodyText, 'body'))}>
+          {item.lang === 'en' && (
+            <button className="btn-outline" onClick={() => titleTr.run(() => translateTitle(item.id, item.title))}>
+              <Dot status={titleTr.status} /> 翻译标题
+            </button>
+          )}
+          {item.lang === 'en' && item.contentLen > 0 && (
+            <button className="btn-outline" onClick={() => bodyTr.run(() => translateBody(item.id))}>
               <Dot status={bodyTr.status} /> 翻译全文
             </button>
           )}
@@ -121,17 +157,18 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
         <AiBlock label="AI 摘要" state={summary} />
         <AiBlock label="标题译文" state={titleTr} />
 
-        {item.image && (
-          <Thumb src={item.image} alt={item.title} ratio="wide" className="mt-6" />
-        )}
-
-        {/* 正文 */}
         <div className="mt-6">
-          {loadingDetail && <div className="skeleton h-40 w-full rounded-xl" />}
+          {loadingDetail && (
+            <div className="space-y-3">
+              {[...Array(6)].map((_, i) => (
+                <div key={i} className="skeleton h-4 w-full rounded" />
+              ))}
+            </div>
+          )}
           {detail ? (
             <>
               <div
-                className="prose-news"
+                className={`prose-news ${SCALE_CLASS[scale]}`}
                 dangerouslySetInnerHTML={{ __html: detail.contentHtml }}
               />
               <AiBlock label="全文译文" state={bodyTr} />
@@ -140,7 +177,7 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
             !loadingDetail && (
               <div className="rounded-2xl border hairline bg-paper-soft p-5 dark:bg-[#1b1a16]">
                 <p className="mb-3 text-xs leading-relaxed text-ink-faint">
-                  这篇暂未提取到可离线阅读的正文（可能因付费墙、动态加载或反爬限制）。以下为摘要，完整内容请查看原文。
+                  这条的正文暂时取不到（付费墙、动态渲染或反爬）。以下是摘要。
                 </p>
                 {item.summary ? (
                   <p className="font-serif text-[1.02rem] leading-[1.85] text-ink-soft dark:text-[#d8d2c8]">
@@ -149,7 +186,6 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
                 ) : (
                   <p className="text-sm text-ink-muted">该源未提供摘要。</p>
                 )}
-                <AiBlock label="全文译文" state={bodyTr} />
                 <a href={item.url} target="_blank" rel="noopener noreferrer" className="btn-primary mt-4">
                   阅读原文
                   <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -166,7 +202,6 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
           <a href={item.url} target="_blank" rel="noopener noreferrer" className="link-accent">
             查看原文
           </a>
-          {item.image && resolveImage(item.image) ? ' · 封面已转存' : ''}
         </footer>
       </article>
     </div>

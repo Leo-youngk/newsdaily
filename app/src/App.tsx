@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNews } from './lib/store';
 import { prefs } from './lib/prefs';
 import { searchFilter } from './lib/filter';
-import type { Item } from './types';
+import { CATEGORIES, type Category, type Item } from './types';
 import CategoryTabs from './components/CategoryTabs';
 import SearchBar from './components/SearchBar';
 import FeedList from './components/FeedList';
@@ -15,25 +15,34 @@ const ALL = '全部';
 export default function App() {
   const news = useNews();
   const [tab, setTab] = useState<Tab>('feed');
-  const [category, setCategory] = useState(ALL);
+  const [category, setCategory] = useState<string>(ALL);
   const [query, setQuery] = useState('');
   const [reader, setReader] = useState<Item | null>(null);
   const [favorites, setFavorites] = useState<Set<string>>(() => prefs.getFavorites());
   const [readSet, setReadSet] = useState<Set<string>>(() => prefs.getRead());
-  const [density, setDensity] = useState(prefs.getDensity());
-  const [sort, setSort] = useState(prefs.getSort());
+  // 密度与排序放在 App 状态里：原来只监听 storage 事件，
+  // 而该事件只跨标签页触发，同页改了设置资讯页纹丝不动
+  const [density, setDensity] = useState(() => prefs.getDensity());
+  const [sort, setSort] = useState(() => prefs.getSort());
+  const [swUpdate, setSwUpdate] = useState<(() => void) | null>(null);
 
-  // 分类列表（含计数）
+  // 新版本就绪时提示用户，而不是让新 SW 直接抢占当前页面导致 chunk 版本错配
+  useEffect(() => {
+    const onUpdate = (e: Event) => {
+      setSwUpdate(() => (e as CustomEvent<() => void>).detail);
+    };
+    window.addEventListener('sw-update', onUpdate);
+    return () => window.removeEventListener('sw-update', onUpdate);
+  }, []);
+
   const { categories, counts } = useMemo(() => {
     const counts: Record<string, number> = { [ALL]: news.items.length };
     for (const it of news.items) counts[it.category] = (counts[it.category] ?? 0) + 1;
-    const order =
-      prefs.getCategoryOrder() ?? Object.keys(news.index?.categories ?? {});
+    const order = (prefs.getCategoryOrder() ?? CATEGORIES) as string[];
     const cats = [ALL, ...order.filter((c) => c !== ALL && counts[c])];
-    // 补齐 order 未覆盖的分类
     for (const c of Object.keys(counts)) if (c !== ALL && !cats.includes(c)) cats.push(c);
     return { categories: cats, counts };
-  }, [news.items, news.index]);
+  }, [news.items]);
 
   const visibleItems = useMemo(() => {
     let list = news.items;
@@ -43,34 +52,35 @@ export default function App() {
     if (sort === 'source') {
       list = [...list].sort(
         (a, b) =>
-          a.sourceName.localeCompare(b.sourceName, 'zh') ||
-          b.publishedAt - a.publishedAt,
+          a.sourceName.localeCompare(b.sourceName, 'zh') || b.publishedAt - a.publishedAt,
       );
     }
     return list;
   }, [news.items, tab, category, query, favorites, sort]);
 
-  const openReader = (item: Item) => {
+  const closeReader = useCallback(() => setReader(null), []);
+
+  const openReader = useCallback((item: Item) => {
     setReader(item);
-    setReadSet((prev) => {
-      if (prev.has(item.id)) return prev;
-      const next = prefs.markRead(item.id);
-      return new Set(next);
-    });
-  };
+    setReadSet((prev) => (prev.has(item.id) ? prev : new Set(prefs.markRead(item.id))));
+    // 接进历史：否则 iOS 侧滑返回和安卓返回键会直接退出 App，而不是关阅读页
+    history.pushState({ reader: item.id }, '');
+  }, []);
 
-  const toggleFavorite = (id: string) => {
-    setFavorites(new Set(prefs.toggleFavorite(id)));
-  };
-
-  // 阅读器打开时同步密度/排序设置的实时变化
   useEffect(() => {
-    const onStorage = () => {
-      setDensity(prefs.getDensity());
-      setSort(prefs.getSort());
-    };
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
+    const onPop = () => setReader(null);
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  // 用返回按钮关闭时也要把那条历史记录退掉，避免再按一次返回才真的退出
+  const handleClose = useCallback(() => {
+    if (history.state?.reader) history.back();
+    else closeReader();
+  }, [closeReader]);
+
+  const toggleFavorite = useCallback((id: string) => {
+    setFavorites(new Set(prefs.toggleFavorite(id)));
   }, []);
 
   const today = new Date();
@@ -78,7 +88,6 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col">
-      {/* 报头 */}
       <header className="pt-safe sticky top-0 z-20 border-b hairline bg-paper/85 backdrop-blur-md dark:bg-[#14130f]/85">
         <div className="mx-auto max-w-feed px-4 sm:px-6">
           <div className="flex items-center justify-between py-3">
@@ -88,7 +97,9 @@ export default function App() {
             </div>
             <div className="flex items-center gap-1">
               {news.fromCache && (
-                <span className="chip mr-1 bg-paper-soft text-ink-faint dark:bg-[#232119]">离线</span>
+                <span className="chip mr-1 bg-paper-soft text-ink-faint dark:bg-[#232119]">
+                  离线
+                </span>
               )}
               <button
                 onClick={() => void news.refresh()}
@@ -96,7 +107,15 @@ export default function App() {
                 aria-label="刷新"
                 disabled={news.loading}
               >
-                <svg viewBox="0 0 24 24" className={`h-5 w-5 ${news.loading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                <svg
+                  viewBox="0 0 24 24"
+                  className={`h-5 w-5 ${news.loading ? 'animate-spin' : ''}`}
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
                   <path d="M20 11a8 8 0 1 0-1.5 6M20 5v6h-6" />
                 </svg>
               </button>
@@ -123,11 +142,22 @@ export default function App() {
         </div>
       </header>
 
-      {/* 主体 */}
       <main className="min-h-0 flex-1">
         {tab === 'settings' ? (
           <div className="h-full overflow-y-auto">
-            <SettingsView items={news.items} />
+            <SettingsView
+              items={news.items}
+              density={density}
+              sort={sort}
+              onDensity={(v) => {
+                setDensity(v);
+                prefs.setDensity(v);
+              }}
+              onSort={(v) => {
+                setSort(v);
+                prefs.setSort(v);
+              }}
+            />
           </div>
         ) : news.loading && !news.items.length ? (
           <FeedSkeleton />
@@ -135,16 +165,26 @@ export default function App() {
           <EmptyState
             title="加载失败"
             desc={news.error}
-            action={<button className="btn-primary mt-4" onClick={() => void news.refresh()}>重试</button>}
+            action={
+              <button className="btn-primary mt-4" onClick={() => void news.refresh()}>
+                重试
+              </button>
+            }
           />
         ) : visibleItems.length === 0 ? (
           <EmptyState
             title={tab === 'saved' ? '还没有收藏' : '没有匹配的条目'}
-            desc={tab === 'saved' ? '在资讯里点书签即可收藏，收藏保存在本机。' : '试试切换分类或清空搜索。'}
+            desc={
+              tab === 'saved'
+                ? '在资讯里点书签即可收藏，收藏保存在本机。'
+                : '试试切换分类或清空搜索。'
+            }
           />
         ) : (
           <div className="mx-auto h-full max-w-feed">
             <FeedList
+              // 切分类/搜索时重建列表，顺带把滚动位置归零
+              key={`${tab}:${category}:${query}:${sort}`}
               items={visibleItems}
               readSet={readSet}
               favorites={favorites}
@@ -156,6 +196,15 @@ export default function App() {
         )}
       </main>
 
+      {swUpdate && (
+        <button
+          onClick={swUpdate}
+          className="fixed inset-x-0 bottom-[4.5rem] z-40 mx-auto flex w-[calc(100%-2rem)] max-w-xs items-center justify-center gap-2 rounded-full bg-ink px-4 py-2.5 text-sm text-paper shadow-pop dark:bg-[#ece8e1] dark:text-[#14130f]"
+        >
+          有新版本，点击刷新
+        </button>
+      )}
+
       <BottomNav tab={tab} onChange={setTab} savedCount={favorites.size} />
 
       {reader && (
@@ -163,7 +212,7 @@ export default function App() {
           item={reader}
           favorite={favorites.has(reader.id)}
           onToggleFavorite={toggleFavorite}
-          onClose={() => setReader(null)}
+          onClose={handleClose}
         />
       )}
     </div>
@@ -173,15 +222,12 @@ export default function App() {
 function FeedSkeleton() {
   return (
     <div className="mx-auto max-w-feed space-y-4 px-4 py-5 sm:px-6">
-      <div className="skeleton aspect-[16/9] w-full rounded-xl" />
-      <div className="skeleton h-6 w-3/4 rounded" />
-      {[...Array(5)].map((_, i) => (
-        <div key={i} className="flex gap-3.5 border-b hairline pb-4 pt-1">
-          <div className="flex-1 space-y-2">
-            <div className="skeleton h-4 w-full rounded" />
-            <div className="skeleton h-4 w-2/3 rounded" />
-          </div>
-          <div className="skeleton h-24 w-24 rounded-xl" />
+      {[...Array(6)].map((_, i) => (
+        <div key={i} className="space-y-2 border-b hairline pb-4 pt-1">
+          <div className="skeleton h-3 w-24 rounded" />
+          <div className="skeleton h-5 w-full rounded" />
+          <div className="skeleton h-5 w-2/3 rounded" />
+          <div className="skeleton h-3.5 w-40 rounded" />
         </div>
       ))}
     </div>
@@ -200,7 +246,13 @@ function EmptyState({
   return (
     <div className="flex h-full flex-col items-center justify-center px-8 text-center">
       <div className="mb-3 grid h-14 w-14 place-items-center rounded-full bg-paper-soft dark:bg-[#232119]">
-        <svg viewBox="0 0 24 24" className="h-6 w-6 text-ink-faint" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <svg
+          viewBox="0 0 24 24"
+          className="h-6 w-6 text-ink-faint"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+        >
           <path d="M4 5h16v14H4z" />
           <path d="M8 9h8M8 13h5" />
         </svg>
@@ -211,3 +263,5 @@ function EmptyState({
     </div>
   );
 }
+
+export type { Category };
