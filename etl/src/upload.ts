@@ -42,6 +42,12 @@ export async function putImage(
   return { skipped: false };
 }
 
+/** 图片是否已在存储里（内容寻址，存在即可跳过下载与转码） */
+export async function imageExists(key: string): Promise<boolean> {
+  if (config.dryRun) return existsSync(path.join(config.outDir, key));
+  return await R2.objectExists(key);
+}
+
 export async function getText(key: string): Promise<string | null> {
   if (config.dryRun) {
     const p = path.join(config.outDir, key);

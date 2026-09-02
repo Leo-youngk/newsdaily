@@ -29,6 +29,41 @@ async function ensureOk(res: Response, ctx: string): Promise<Response> {
   return res;
 }
 
+/**
+ * 带超时与重试的 R2 请求。
+ * 原来这里是裸 fetch：一次 headers timeout 就让整轮采集 process.exit(1)，
+ * 抓好的几十条数据全丢。Cloudflare 管理 API 偶发超时是常态，必须重试。
+ */
+async function r2Fetch(
+  url: string,
+  init: RequestInit,
+  ctx: string,
+  retries = 3,
+): Promise<Response> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 30000);
+    try {
+      const res = await fetch(url, { ...init, signal: ctrl.signal });
+      // 5xx 与 429 重试，其余（含 404）交给调用方判断
+      if (res.status >= 500 || res.status === 429) {
+        lastErr = new Error(`R2 ${ctx} HTTP ${res.status}`);
+      } else {
+        return res;
+      }
+    } catch (err) {
+      lastErr = err;
+    } finally {
+      clearTimeout(timer);
+    }
+    if (attempt < retries) {
+      await new Promise((r) => setTimeout(r, 800 * 2 ** attempt));
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(`R2 ${ctx}: ${String(lastErr)}`);
+}
+
 export interface R2ListResult {
   key: string;
   size: number;
@@ -38,10 +73,11 @@ export interface R2ListResult {
 
 /** 读取对象文本，不存在返回 null */
 export async function getObjectText(key: string): Promise<string | null> {
-  const res = await fetch(`${baseUrl()}/objects/${encodeKey(key)}`, {
-    method: 'GET',
-    headers: headers(),
-  });
+  const res = await r2Fetch(
+    `${baseUrl()}/objects/${encodeKey(key)}`,
+    { method: 'GET', headers: headers() },
+    `GET ${key}`,
+  );
   if (res.status === 404) return null;
   await ensureOk(res, `GET ${key}`);
   return await res.text();
@@ -59,10 +95,11 @@ export async function getObjectJson<T>(key: string): Promise<T | null> {
 
 /** 读取对象二进制，不存在返回 null */
 export async function getObjectBuffer(key: string): Promise<Buffer | null> {
-  const res = await fetch(`${baseUrl()}/objects/${encodeKey(key)}`, {
-    method: 'GET',
-    headers: headers(),
-  });
+  const res = await r2Fetch(
+    `${baseUrl()}/objects/${encodeKey(key)}`,
+    { method: 'GET', headers: headers() },
+    `GET ${key}`,
+  );
   if (res.status === 404) return null;
   await ensureOk(res, `GET ${key}`);
   return Buffer.from(await res.arrayBuffer());
@@ -70,10 +107,11 @@ export async function getObjectBuffer(key: string): Promise<Buffer | null> {
 
 /** HEAD 判断对象是否存在 */
 export async function objectExists(key: string): Promise<boolean> {
-  const res = await fetch(`${baseUrl()}/objects/${encodeKey(key)}`, {
-    method: 'HEAD',
-    headers: headers(),
-  });
+  const res = await r2Fetch(
+    `${baseUrl()}/objects/${encodeKey(key)}`,
+    { method: 'HEAD', headers: headers() },
+    `HEAD ${key}`,
+  );
   if (res.status === 404) return false;
   return res.ok;
 }
@@ -83,11 +121,11 @@ export async function putObjectText(
   body: string,
   contentType = 'application/json; charset=utf-8',
 ): Promise<void> {
-  const res = await fetch(`${baseUrl()}/objects/${encodeKey(key)}`, {
-    method: 'PUT',
-    headers: headers({ 'Content-Type': contentType }),
-    body,
-  });
+  const res = await r2Fetch(
+    `${baseUrl()}/objects/${encodeKey(key)}`,
+    { method: 'PUT', headers: headers({ 'Content-Type': contentType }), body },
+    `PUT ${key}`,
+  );
   await ensureOk(res, `PUT ${key}`);
 }
 
@@ -96,19 +134,24 @@ export async function putObjectBuffer(
   body: Buffer | Uint8Array,
   contentType: string,
 ): Promise<void> {
-  const res = await fetch(`${baseUrl()}/objects/${encodeKey(key)}`, {
-    method: 'PUT',
-    headers: headers({ 'Content-Type': contentType }),
-    body: new Uint8Array(body),
-  });
+  const res = await r2Fetch(
+    `${baseUrl()}/objects/${encodeKey(key)}`,
+    {
+      method: 'PUT',
+      headers: headers({ 'Content-Type': contentType }),
+      body: new Uint8Array(body),
+    },
+    `PUT ${key}`,
+  );
   await ensureOk(res, `PUT ${key}`);
 }
 
 export async function deleteObject(key: string): Promise<void> {
-  const res = await fetch(`${baseUrl()}/objects/${encodeKey(key)}`, {
-    method: 'DELETE',
-    headers: headers(),
-  });
+  const res = await r2Fetch(
+    `${baseUrl()}/objects/${encodeKey(key)}`,
+    { method: 'DELETE', headers: headers() },
+    `DELETE ${key}`,
+  );
   if (res.status === 404) return;
   await ensureOk(res, `DELETE ${key}`);
 }
@@ -123,10 +166,11 @@ export async function listObjects(
   do {
     const params = new URLSearchParams({ per_page: '1000', prefix });
     if (cursor) params.set('cursor', cursor);
-    const res = await fetch(`${baseUrl()}/objects?${params.toString()}`, {
-      method: 'GET',
-      headers: headers(),
-    });
+    const res = await r2Fetch(
+      `${baseUrl()}/objects?${params.toString()}`,
+      { method: 'GET', headers: headers() },
+      `LIST ${prefix}`,
+    );
     await ensureOk(res, `LIST ${prefix}`);
     const json = (await res.json()) as {
       success: boolean;

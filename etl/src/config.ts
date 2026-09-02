@@ -39,8 +39,8 @@ export const config = {
   dryRun: env('DRY_RUN', '0') === '1',
   outDir: env('OUT_DIR', 'out'),
 
-  // 是否对 kind=deep 且开启 offlineReading 的源做正文提取
-  extractContent: env('EXTRACT_CONTENT', '1') === '1',
+  // 图片是加分项不是必需品：IMAGES=0 可整体关掉图片处理
+  images: env('IMAGES', '1') === '1',
 };
 
 export function assertCloudflareCreds(): void {

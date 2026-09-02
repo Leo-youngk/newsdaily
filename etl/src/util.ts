@@ -118,6 +118,28 @@ export function firstImgSrc(html: string): string | undefined {
   return m ? decodeEntities(m[1]) : undefined;
 }
 
+/** itunes:duration 解析：支持 "5025" / "1:23:45" / "23:45" */
+export function parseDuration(value?: string | number | null): number | undefined {
+  if (value == null) return undefined;
+  const s = String(value).trim();
+  if (!s) return undefined;
+  if (/^\d+$/.test(s)) return parseInt(s, 10);
+  const parts = s.split(':').map((p) => parseInt(p, 10));
+  if (parts.some(Number.isNaN)) return undefined;
+  return parts.reduce((acc, p) => acc * 60 + p, 0);
+}
+
+/**
+ * 预计阅读时长（分钟）。中文按 400 字/分，英文按 240 词/分。
+ * 逐字稿语速快、信息密度低，但按阅读速度算才对得上"读"这个动作。
+ */
+export function readingMinutes(text: string, lang: 'zh' | 'en'): number {
+  if (!text) return 0;
+  if (lang === 'zh') return Math.max(1, Math.round(text.length / 400));
+  const words = text.split(/\s+/).filter(Boolean).length;
+  return Math.max(1, Math.round(words / 240));
+}
+
 export function parseDate(value?: string | number | null): number {
   if (value == null) return Date.now();
   if (typeof value === 'number') return value;

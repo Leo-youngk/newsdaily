@@ -1,21 +1,29 @@
 import Parser from 'rss-parser';
 import { fetchText } from './fetch.js';
 import { config } from './config.js';
-import { decodeEntities, parseDate } from './util.js';
+import { decodeEntities, parseDate, parseDuration } from './util.js';
+
+export interface TranscriptRef {
+  url: string;
+  type: string; // text/plain, text/html, text/vtt, application/json, application/x-subrip
+}
 
 export interface RawEntry {
   title: string;
   link: string;
   guid: string;
   publishedAt: number;
-  /** description 或 content:encoded 的原始 HTML */
+  /** content:encoded 或 description 的原始 HTML —— readable=full 的源直接吃这个 */
   contentHtml: string;
   /** feed 自带摘要纯文本 */
   summary: string;
-  /** media:content / media:thumbnail / media:group 内的图片候选 */
-  mediaImages: string[];
-  /** enclosure 中 type 为 image 的 URL */
-  enclosureImage?: string;
+  /** <podcast:transcript> 声明的文稿文件 */
+  transcripts: TranscriptRef[];
+  /** 音频直链与时长（播客） */
+  audioUrl?: string;
+  durationSec?: number;
+  /** 封面图候选（可选，图片不是必需品） */
+  imageCandidate?: string;
   categories: string[];
 }
 
@@ -23,51 +31,70 @@ const parser: Parser = new Parser({
   timeout: config.sourceTimeout,
   headers: {
     'User-Agent':
-      'Mozilla/5.0 (compatible; NewsPWA/1.0; +https://github.com/news-pwa)',
-    Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
+      'Mozilla/5.0 (compatible; NewsPWA/2.0; +https://github.com/news-pwa)',
+    Accept:
+      'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
   },
   customFields: {
     item: [
       ['content:encoded', 'contentEncoded'],
+      ['podcast:transcript', 'podcastTranscript', { keepArray: true }],
+      ['itunes:duration', 'itunesDuration'],
       ['media:content', 'mediaContent', { keepArray: true }],
       ['media:thumbnail', 'mediaThumbnail', { keepArray: true }],
-      ['media:group', 'mediaGroup', { keepArray: true }],
     ],
   },
 });
 
-function collectMediaUrls(entry: any): string[] {
-  const urls: string[] = [];
-  const push = (v: any) => {
-    if (!v) return;
-    const arr = Array.isArray(v) ? v : [v];
-    for (const m of arr) {
-      if (typeof m === 'string') urls.push(m);
-      else if (m && typeof m === 'object') {
-        if (m.$?.url) urls.push(m.$.url);
-        if (m.url) urls.push(m.url);
-        // media:group 内嵌 media:content
-        if (m['media:content']) collectMediaUrls(m['media:content']);
-      }
-    }
-  };
-  push(entry.mediaContent);
-  push(entry.mediaThumbnail);
-  push(entry.mediaGroup);
-  return urls.filter((u) => /^https?:\/\//i.test(u));
+function collectTranscripts(entry: any): TranscriptRef[] {
+  const raw = entry.podcastTranscript;
+  if (!raw) return [];
+  const arr = Array.isArray(raw) ? raw : [raw];
+  const out: TranscriptRef[] = [];
+  for (const t of arr) {
+    const attrs = t?.$ ?? t;
+    const url = attrs?.url;
+    if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) continue;
+    // rel="captions" 是字幕文件，逐字稿优先，但没别的时也能用
+    out.push({ url, type: String(attrs?.type ?? '') });
+  }
+  // 排序偏好：纯文本 > html > json > vtt > srt
+  const rank = (t: string) =>
+    t.includes('plain') ? 0
+    : t.includes('html') ? 1
+    : t.includes('json') ? 2
+    : t.includes('vtt') ? 3
+    : 4;
+  return out.sort((a, b) => rank(a.type) - rank(b.type));
 }
 
-function pickEnclosureImage(entry: any): string | undefined {
+function pickAudio(entry: any): string | undefined {
   const enc = entry.enclosure;
-  if (!enc) return undefined;
-  const type: string = enc.type ?? '';
-  if (type.startsWith('image/') && enc.url) return enc.url;
+  if (enc?.url && String(enc.type ?? '').startsWith('audio/')) return enc.url;
   return undefined;
 }
 
+function pickImage(entry: any): string | undefined {
+  const push = (v: any): string | undefined => {
+    if (!v) return undefined;
+    const arr = Array.isArray(v) ? v : [v];
+    for (const m of arr) {
+      const u = typeof m === 'string' ? m : m?.$?.url ?? m?.url;
+      if (typeof u === 'string' && /^https?:\/\//i.test(u)) return u;
+    }
+    return undefined;
+  };
+  const media = push(entry.mediaContent) ?? push(entry.mediaThumbnail);
+  if (media) return media;
+  const enc = entry.enclosure;
+  if (enc?.url && String(enc.type ?? '').startsWith('image/')) return enc.url;
+  const html: string = entry.contentEncoded || entry.content || entry.description || '';
+  const m = html.match(/<img[^>]+src=["']([^"']+)["']/i);
+  return m ? decodeEntities(m[1]) : undefined;
+}
+
 function pickLink(entry: any): string {
-  if (entry.link) return entry.link;
-  // Atom 可能把 link 放在 atomLink
+  if (entry.link) return String(entry.link).trim();
   const al = entry.atomLink;
   if (Array.isArray(al)) {
     const alt = al.find((x: any) => x?.$?.rel === 'alternate');
@@ -79,9 +106,8 @@ function pickLink(entry: any): string {
   return '';
 }
 
-/** 抓取并解析单个 feed，返回 RawEntry 列表 */
+/** 抓取并解析单个 feed */
 export async function parseFeed(url: string): Promise<RawEntry[]> {
-  // 自己抓取以获得更好的 UA/超时控制，再交给 rss-parser 解析字符串
   const xml = await fetchText(url, {
     timeout: config.sourceTimeout,
     retries: config.retries,
@@ -90,10 +116,7 @@ export async function parseFeed(url: string): Promise<RawEntry[]> {
   const out: RawEntry[] = [];
   for (const entry of feed.items ?? []) {
     const any = entry as any;
-    const contentHtml =
-      any.contentEncoded || any.content || any.summary || any.description || '';
-    const titleRaw = any.title ?? '';
-    const title = decodeEntities(String(titleRaw)).trim();
+    const title = decodeEntities(String(any.title ?? '')).trim();
     if (!title) continue;
     const link = pickLink(any);
     if (!link) continue;
@@ -102,12 +125,18 @@ export async function parseFeed(url: string): Promise<RawEntry[]> {
       link,
       guid: String(any.guid ?? any.id ?? link),
       publishedAt: parseDate(any.isoDate ?? any.pubDate ?? any.date ?? feed.lastBuildDate),
-      contentHtml: String(contentHtml),
+      contentHtml: String(
+        any.contentEncoded || any.content || any.summary || any.description || '',
+      ),
       summary: String(any.contentSnippet ?? any.summary ?? any.description ?? '').trim(),
-      mediaImages: collectMediaUrls(any),
-      enclosureImage: pickEnclosureImage(any),
+      transcripts: collectTranscripts(any),
+      audioUrl: pickAudio(any),
+      durationSec: parseDuration(any.itunesDuration),
+      imageCandidate: pickImage(any),
       categories: Array.isArray(any.categories)
-        ? any.categories.map((c: any) => (typeof c === 'string' ? c : c?._ ?? '')).filter(Boolean)
+        ? any.categories
+            .map((c: any) => (typeof c === 'string' ? c : c?._ ?? ''))
+            .filter(Boolean)
         : [],
     });
   }

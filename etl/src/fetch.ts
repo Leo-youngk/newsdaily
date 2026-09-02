@@ -47,12 +47,15 @@ export async function fetchUrl(
       );
       if (res.ok) return res;
       lastErr = new Error(`HTTP ${res.status} ${res.statusText}`);
-      // 4xx（除 429）不重试
+      // 4xx（除 429）没有重试价值，直接放弃。
+      // 注意不能在这里 throw：外层 catch 会把它接住，反而变成继续重试。
       if (res.status >= 400 && res.status < 500 && res.status !== 429) {
         throw lastErr;
       }
     } catch (err) {
       lastErr = err;
+      const msg = err instanceof Error ? err.message : '';
+      if (/^HTTP 4(?!29)/.test(msg)) break;
     }
     if (attempt < retries) await sleep(600 * (attempt + 1));
   }
