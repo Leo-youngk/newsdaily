@@ -55,6 +55,17 @@ export async function hasFfmpeg(): Promise<boolean> {
   }
 }
 
+/**
+ * 给 whisper 的引导词。
+ * 中文转写默认几乎不输出标点，整集会连成一片没法读；
+ * 用一段带标准标点的示例文本做 initial_prompt 是公认有效的做法，
+ * 顺带也能把分段逻辑（依赖句末标点）激活。
+ */
+const INITIAL_PROMPT: Record<string, string> = {
+  zh: '以下是一段普通话播客对话的文字记录，使用标准中文标点符号。比如：这个问题我们先放一放，等会儿再聊。你觉得呢？对，我同意。',
+  en: '',
+};
+
 async function callWhisper(
   mp3: Buffer,
   lang: string,
@@ -73,6 +84,9 @@ async function callWhisper(
         audio: mp3.toString('base64'),
         task: 'transcribe',
         language: lang,
+        ...(INITIAL_PROMPT[lang] ? { initial_prompt: INITIAL_PROMPT[lang] } : {}),
+        // 过滤静音段，减少 whisper 在空白处的幻觉输出
+        vad_filter: true,
       }),
       signal: ctrl.signal,
     });
@@ -199,9 +213,10 @@ export function segmentsToHtml(t: Transcription, lang: 'zh' | 'en'): string {
     if (!buf.length) start = s.start;
     buf.push(s.text);
     len += s.text.length;
-    // 攒够长度且落在句末就断段，避免把一句话切两半
+    // 攒够长度且落在句末就断段，避免把一句话切两半；
+    // 万一模型仍然不给标点，按长度硬断，不能让一段几千字连成一片
     if (len >= maxChars && /[。！？.!?…」』"']$/.test(s.text)) flush();
-    else if (len >= maxChars * 2) flush();
+    else if (len >= maxChars * 1.8) flush();
   }
   flush();
   return out.join('');
