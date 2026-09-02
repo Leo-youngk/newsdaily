@@ -136,6 +136,12 @@ export interface TranscribeTask {
 export interface TranscribeQueue {
   updatedAt: number;
   tasks: TranscribeTask[];
+  /**
+   * 当日已消耗的音频分钟数。Workers AI 的免费额度按 UTC 天重置，
+   * 所以这里记 UTC 日期；跨天自动归零。
+   * 每次运行的预算管不住每天的总量（cron 一天跑 4 次），必须按天记账。
+   */
+  usage?: { utcDate: string; minutes: number };
 }
 
 export interface SourceHealth {

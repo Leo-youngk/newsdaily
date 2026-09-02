@@ -11,11 +11,19 @@ import type { Item, ItemDetail, TranscribeQueue } from './types.js';
  * 采集（etl）遇到没有现成文字稿的播客时只入队，不阻塞；
  * 这里按额度把队列消化掉，把正文写进 detail/ 并回填当日分片。
  *
- * 额度：Workers AI 免费层 10,000 neurons/天，whisper 计 46.63 neurons/音频分钟，
- * 即每天约 214 分钟。默认留出余量取 180 分钟。
+ * 额度必须按天算，不能只按单次运行算：
+ * Workers AI 免费层 10,000 neurons/天，whisper 计 46.63 neurons/音频分钟
+ * → 每天 214 分钟。而 cron 一天跑 4 次，只限制单次预算的话
+ * 4 × 180 = 720 分钟/天，会直接跑出免费额度开始计费。
+ * 当日用量记在队列文件里，按 UTC 日期跨天归零。
  */
-const MINUTE_BUDGET = parseInt(process.env.TRANSCRIBE_MINUTES ?? '180', 10);
+const DAILY_CAP = parseInt(process.env.TRANSCRIBE_DAILY_CAP ?? '200', 10);
+const RUN_BUDGET = parseInt(process.env.TRANSCRIBE_MINUTES ?? '90', 10);
 const MAX_ATTEMPTS = 3;
+
+function utcDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
 
 async function loadQueue(): Promise<TranscribeQueue> {
   return (await store.readQueue()) ?? { updatedAt: 0, tasks: [] };
@@ -108,10 +116,21 @@ async function main(): Promise<void> {
   }
 
   const queue = await loadQueue();
+  const today = utcDate();
+  const usedToday = queue.usage?.utcDate === today ? queue.usage.minutes : 0;
+  const budget = Math.max(0, Math.min(RUN_BUDGET, DAILY_CAP - usedToday));
+
   const pending = queue.tasks.filter((t) => t.attempts < MAX_ATTEMPTS);
-  console.log(`[start] 队列 ${queue.tasks.length} 条，可处理 ${pending.length} 条，额度 ${MINUTE_BUDGET} 分钟`);
+  console.log(
+    `[start] 队列 ${queue.tasks.length} 条，可处理 ${pending.length} 条 | ` +
+      `本次额度 ${budget} 分钟（单次上限 ${RUN_BUDGET}，今日已用 ${usedToday}/${DAILY_CAP}）`,
+  );
   if (!pending.length) {
     console.log('[done] 队列为空');
+    return;
+  }
+  if (budget <= 0) {
+    console.log(`[done] 今日额度已用尽（${usedToday}/${DAILY_CAP} 分钟），留到明天`);
     return;
   }
 
@@ -125,8 +144,8 @@ async function main(): Promise<void> {
 
   for (const task of pending) {
     const est = Math.ceil((task.durationSec ?? 3600) / 60);
-    if (usedMinutes + est > MINUTE_BUDGET) {
-      console.log(`[skip] 额度不足（已用 ${usedMinutes}，本条约 ${est} 分钟），留到下一轮：${task.title.slice(0, 40)}`);
+    if (usedMinutes + est > budget) {
+      console.log(`[skip] 额度不足（本次已用 ${usedMinutes}/${budget}，本条约 ${est} 分钟），留到下一轮：${task.title.slice(0, 40)}`);
       continue;
     }
 
@@ -153,7 +172,8 @@ async function main(): Promise<void> {
       usedMinutes += t.audioMinutes;
       done.add(task.id);
       console.log(
-        `[ok] ${t.text.length} 字 / 阅读约 ${minutes} 分钟 / 音频 ${t.audioMinutes} 分钟，累计用量 ${usedMinutes}/${MINUTE_BUDGET}`,
+        `[ok] ${t.text.length} 字 / 阅读约 ${minutes} 分钟 / 音频 ${t.audioMinutes} 分钟，` +
+          `本次 ${usedMinutes}/${budget}，今日 ${usedToday + usedMinutes}/${DAILY_CAP}`,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -169,11 +189,16 @@ async function main(): Promise<void> {
   // 成功的移出队列；失败次数用尽的也移出，避免反复烧额度
   const remaining = queue.tasks.filter((t) => !done.has(t.id) && t.attempts < MAX_ATTEMPTS);
   const dropped = queue.tasks.length - remaining.length - done.size;
-  await store.writeQueue({ updatedAt: Date.now(), tasks: remaining });
+  await store.writeQueue({
+    updatedAt: Date.now(),
+    tasks: remaining,
+    usage: { utcDate: today, minutes: usedToday + usedMinutes },
+  });
 
   console.log(
     `[done] 转写 ${done.size} 条，放弃 ${dropped} 条，剩余 ${remaining.length} 条，` +
-      `用量 ${usedMinutes} 分钟，用时 ${((Date.now() - startedAt) / 1000).toFixed(0)}s`,
+      `本次 ${usedMinutes} 分钟，今日累计 ${usedToday + usedMinutes}/${DAILY_CAP}，` +
+      `用时 ${((Date.now() - startedAt) / 1000).toFixed(0)}s`,
   );
 }
 

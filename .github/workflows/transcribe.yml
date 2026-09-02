@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       minutes:
-        description: '本次转写的音频分钟额度（免费层每天约 214 分钟）'
+        description: '本次运行的音频分钟上限（每日总量另有 200 分钟硬顶）'
         required: false
-        default: '180'
+        default: '90'
 
 concurrency:
   group: transcribe
@@ -49,7 +49,9 @@ jobs:
           CF_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           CF_API_TOKEN: ${{ secrets.R2_API_TOKEN }}
           R2_BUCKET: ${{ vars.R2_BUCKET || 'news-pwa' }}
-          TRANSCRIBE_MINUTES: ${{ github.event.inputs.minutes || '180' }}
+          # 单次上限；每日总量由 TRANSCRIBE_DAILY_CAP 按 UTC 天记账强制
+          TRANSCRIBE_MINUTES: ${{ github.event.inputs.minutes || '90' }}
+          TRANSCRIBE_DAILY_CAP: '200'
         run: npm run transcribe
 
       - name: Summary
