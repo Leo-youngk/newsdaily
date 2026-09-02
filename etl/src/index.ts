@@ -65,21 +65,46 @@ async function loadConfig(): Promise<AppConfig> {
     await store.writeConfig({ ...seed, updatedAt: Date.now() });
     return seed;
   }
+
   const remote = await store.readConfig();
-  // 种子清单版本更高时（schema 改过）强制以种子为准，避免旧结构污染管线
-  if (remote && Array.isArray(remote.sources) && remote.sources.length) {
-    if ((remote.version ?? 0) >= seed.version) {
-      console.log(`[config] 使用 R2 config/sources.json（${remote.sources.length} 源）`);
-      return remote;
-    }
-    console.log(
-      `[config] R2 配置版本 ${remote.version ?? 0} < 种子 ${seed.version}，改用种子清单并回写`,
-    );
-  } else {
-    console.log(`[config] R2 无配置，使用种子清单（${seed.sources.length} 源）`);
+  if (!remote?.sources?.length) {
+    console.log(`[config] R2 无配置，使用种子清单（${seed.sources.length} 源）并回写`);
+    await store.writeConfig({ ...seed, updatedAt: Date.now() });
+    return seed;
   }
-  await store.writeConfig({ ...seed, updatedAt: Date.now() });
-  return seed;
+
+  // 源的"定义"归代码，用户的"偏好"归 R2。
+  // 此前是整份配置二选一：一旦 R2 版本号追平种子，改 sources.seed.json 里的
+  // url / readable / 文稿规则就再也不生效了（Import AI 换域名时就撞上了）。
+  const userBySource = new Map(remote.sources.map((s) => [s.id, s]));
+  const merged: SourceConfig[] = seed.sources.map((def) => {
+    const u = userBySource.get(def.id);
+    return u
+      ? {
+          ...def,
+          enabled: u.enabled ?? def.enabled,
+          limit: u.limit ?? def.limit,
+          keywords: u.keywords ?? def.keywords,
+        }
+      : def;
+  });
+  // PWA 里自己加的源完整保留
+  const seedIds = new Set(seed.sources.map((s) => s.id));
+  const custom = remote.sources.filter((s) => !seedIds.has(s.id) && s.id.startsWith('custom-'));
+
+  const cfg: AppConfig = {
+    version: seed.version,
+    updatedAt: Date.now(),
+    categories: { ...seed.categories, ...(remote.categories ?? {}) },
+    settings: { ...seed.settings, ...(remote.settings ?? {}) },
+    sources: [...merged, ...custom],
+  };
+  console.log(
+    `[config] 种子 ${seed.sources.length} 个源定义 + R2 用户偏好` +
+      `${custom.length ? ` + 自定义 ${custom.length} 个` : ''}`,
+  );
+  await store.writeConfig(cfg);
+  return cfg;
 }
 
 /** 从已抓回的页面 HTML 里顺手取 og:image —— 不额外发请求 */
