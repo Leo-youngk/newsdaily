@@ -120,14 +120,15 @@
     {
       "id": "importai",
       "name": "Import AI",
-      "url": "https://importai.substack.com/feed",
+      "url": "https://jack-clark.net/feed/",
       "category": "AI",
       "lang": "en",
       "readable": "full",
       "enabled": true,
       "limit": 6,
       "minChars": 4000,
-      "note": "Jack Clark 的 AI 研究周报，中位 1.68 万字符"
+      "expectedDomain": "jack-clark.net",
+      "note": "Jack Clark 的 AI 研究周报，中位 1.5 万字符。用 jack-clark.net 镜像而非 importai.substack.com——后者在 GitHub Actions 的机房 IP 上返回 403"
     },
     {
       "id": "interconnects",

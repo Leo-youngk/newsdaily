@@ -169,9 +169,12 @@ async function buildItem(s: SourceConfig, entry: RawEntry): Promise<Built | null
     summary: summaryText || undefined,
     url,
     publishedAt: entry.publishedAt,
-    contentLen: content.text.length && content.source !== 'pending-transcript'
-      ? content.text.length
-      : 0,
+    // 没拿到全文（none）与待转写（pending）都必须记 0：
+    // 前者的 text 是 feed 里那点摘要兜底，算进来会让 dropUnreadable 失效
+    contentLen:
+      content.source === 'none' || content.source === 'pending-transcript'
+        ? 0
+        : content.text.length,
     contentSource: content.source,
     readingMinutes:
       content.source === 'none' || content.source === 'pending-transcript'
