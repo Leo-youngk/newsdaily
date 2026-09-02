@@ -166,6 +166,18 @@
   @apply mt-2 text-center text-xs text-ink-faint;
 }
 
+/* 逐字稿的时间戳：点击段落可跳转音频 */
+.prose-news p[data-t] {
+  cursor: pointer;
+}
+.prose-news p[data-t]:hover .ts {
+  @apply text-accent;
+}
+.prose-news .ts {
+  @apply mr-2 select-none font-sans text-[0.72em] tabular-nums text-ink-faint;
+  vertical-align: 0.1em;
+}
+
 /* 骨架屏微光 */
 @keyframes shimmer {
   100% {

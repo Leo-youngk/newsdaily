@@ -17,6 +17,7 @@ const READABLE_LABEL: Record<Readable, string> = {
   full: '全文直达',
   transcript: '逐字稿',
   extract: '需提取',
+  transcribe: '自动转写',
 };
 
 function genId(name: string): string {
@@ -77,7 +78,11 @@ export default function SourceManager({ config, onChange }: Props) {
       enabled: true,
       limit: 8,
       // 逐字稿类默认门槛高一点，防止只抓到 shownotes 就当成全文
-      minChars: readable === 'transcript' ? 15000 : lang === 'zh' ? 1500 : 4000,
+      minChars:
+        readable === 'transcript' ? 15000
+        : readable === 'transcribe' ? 8000
+        : lang === 'zh' ? 1500
+        : 4000,
       expectedDomain: domain,
       keywords: [],
     };
@@ -129,7 +134,8 @@ export default function SourceManager({ config, onChange }: Props) {
             label="正文来源"
             options={[
               ['full', 'feed 自带全文'],
-              ['transcript', '播客逐字稿'],
+              ['transcript', '播客有现成稿'],
+              ['transcribe', '播客需转写'],
               ['extract', '抓原文页提取'],
             ]}
             value={readable}

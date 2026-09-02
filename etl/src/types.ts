@@ -10,17 +10,21 @@ export type Lang = 'zh' | 'en';
 /**
  * 可读等级：决定这个源走哪条采集管线，也是本项目的核心指标来源。
  *   full       feed 的 content:encoded 就是全文，零抓取成本
- *   transcript 播客，正文是逐字稿：先看 <podcast:transcript> 标签，再按规则推文稿页
+ *   transcript 播客，已有现成逐字稿：先看 <podcast:transcript> 标签，再按规则推文稿页
  *   extract    只有摘要，需要抓原文页并做正文提取
+ *   transcribe 播客且没有任何现成文字稿（中文播客全是这种）：入队，由
+ *              transcribe 工作流用 Cloudflare Workers AI 的 whisper 异步转写
  */
-export type Readable = 'full' | 'transcript' | 'extract';
+export type Readable = 'full' | 'transcript' | 'extract' | 'transcribe';
 
 /** 正文最终从哪儿来的，用于统计可读率与前端标注 */
 export type ContentSource =
   | 'feed' // feed 自带全文
   | 'transcript-tag' // <podcast:transcript> 直链
   | 'transcript-page' // 按规则推出的文稿页
+  | 'transcript-whisper' // 我们自己转写的
   | 'extract' // 原文页提取
+  | 'pending-transcript' // 已入队，等待转写
   | 'none'; // 没拿到，只有摘要
 
 export interface TranscriptRule {
@@ -109,6 +113,29 @@ export interface AppConfig {
   categories: Record<Category, boolean>;
   settings: AppSettings;
   sources: SourceConfig[];
+}
+
+/** 待转写队列里的一项 */
+export interface TranscribeTask {
+  id: string;
+  sourceId: string;
+  sourceName: string;
+  title: string;
+  url: string;
+  audioUrl: string;
+  lang: Lang;
+  /** 条目所在的日期分片，转写完成后要回填它 */
+  date: string;
+  durationSec?: number;
+  enqueuedAt: number;
+  /** 失败次数，超过阈值放弃，避免一条坏音频反复烧额度 */
+  attempts: number;
+  lastError?: string;
+}
+
+export interface TranscribeQueue {
+  updatedAt: number;
+  tasks: TranscribeTask[];
 }
 
 export interface SourceHealth {

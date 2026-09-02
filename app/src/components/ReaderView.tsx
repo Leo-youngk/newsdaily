@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { isTranscript, type Item, type ItemDetail } from '../types';
+import { useEffect, useRef, useState } from 'react';
+import { isPending, isTranscript, type Item, type ItemDetail } from '../types';
 import { dataApi } from '../lib/api';
 import { summarize, translateBody, translateTitle, type AiResult } from '../lib/ai';
 import { fullDate, categoryColor, readingLabel } from '../lib/format';
@@ -38,9 +38,21 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
   const [detail, setDetail] = useState<ItemDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(item.contentLen > 0);
   const [scale, setScale] = useState<FontScale>(() => prefs.getFontScale());
+  const audioRef = useRef<HTMLAudioElement>(null);
   const summary = useAi();
   const titleTr = useAi();
   const bodyTr = useAi();
+
+  // 逐字稿段落带 data-t 秒数：点一下就把音频跳到那儿，边听边读
+  const seekFromParagraph = (e: React.MouseEvent<HTMLDivElement>) => {
+    const el = (e.target as HTMLElement).closest<HTMLElement>('[data-t]');
+    const audio = audioRef.current;
+    if (!el || !audio) return;
+    const t = Number(el.dataset.t);
+    if (!Number.isFinite(t)) return;
+    audio.currentTime = t;
+    void audio.play().catch(() => {});
+  };
 
   useEffect(() => {
     let alive = true;
@@ -58,6 +70,7 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
   }, [item.id, item.contentLen]);
 
   const transcript = isTranscript(item);
+  const pending = isPending(item);
 
   return (
     <div className="fixed inset-0 z-40 touch-pan-y overflow-y-auto overscroll-y-contain bg-paper dark:bg-[#14130f]">
@@ -122,6 +135,9 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
           {transcript && (
             <span className="chip bg-accent-wash px-2 py-0 text-accent dark:bg-[#241d16]">逐字稿</span>
           )}
+          {pending && (
+            <span className="chip bg-paper-soft px-2 py-0 text-ink-faint dark:bg-[#232119]">转写中</span>
+          )}
         </div>
 
         <h1 className="title-serif text-[1.75rem] font-bold leading-tight">
@@ -131,6 +147,7 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
         {/* 播客：正文是逐字稿，但音频也该能边听边读 */}
         {item.audioUrl && (
           <audio
+            ref={audioRef}
             controls
             preload="none"
             src={item.audioUrl}
@@ -169,6 +186,7 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
             <>
               <div
                 className={`prose-news ${SCALE_CLASS[scale]}`}
+                onClick={item.audioUrl ? seekFromParagraph : undefined}
                 dangerouslySetInnerHTML={{ __html: detail.contentHtml }}
               />
               <AiBlock label="全文译文" state={bodyTr} />
@@ -177,7 +195,9 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
             !loadingDetail && (
               <div className="rounded-2xl border hairline bg-paper-soft p-5 dark:bg-[#1b1a16]">
                 <p className="mb-3 text-xs leading-relaxed text-ink-faint">
-                  这条的正文暂时取不到（付费墙、动态渲染或反爬）。以下是摘要。
+                  {pending
+                    ? '这集还在转写队列里（中文播客没有现成文字稿，由 whisper 自动转写，通常几小时内完成）。可以先听音频。'
+                    : '这条的正文暂时取不到（付费墙、动态渲染或反爬）。以下是摘要。'}
                 </p>
                 {item.summary ? (
                   <p className="font-serif text-[1.02rem] leading-[1.85] text-ink-soft dark:text-[#d8d2c8]">

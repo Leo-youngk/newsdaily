@@ -30,6 +30,7 @@ import type {
   SourceConfig,
   LatestIndex,
   SourceHealth,
+  TranscribeTask,
 } from './types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -48,6 +49,8 @@ interface SourceResult {
   /** 拿到全文的条数 / 总条数 */
   readable: number;
   total: number;
+  /** 已入队等待转写的条数 */
+  pending: number;
 }
 
 async function loadSeedConfig(): Promise<AppConfig> {
@@ -115,12 +118,18 @@ async function resolveContent(
   }
 
   // 2) 播客逐字稿：<podcast:transcript> 标签 → 文稿页规则
-  if (s.readable === 'transcript') {
+  if (s.readable === 'transcript' || s.readable === 'transcribe') {
     const t = await resolveTranscript(url, entry.transcripts, s.transcript, min);
     if (t) return { html: t.html, text: t.text, source: t.source };
   }
 
-  // 3) 兜底：抓原文页做正文提取（readable=extract 的主路径，也是前两条的降级）
+  // 3) 没有任何现成文字稿的播客：入队等 whisper 转写，不在这里阻塞采集
+  if (s.readable === 'transcribe') {
+    if (entry.audioUrl) return { html: '', text: '', source: 'pending-transcript' };
+    return { html: '', text: '', source: 'none' };
+  }
+
+  // 4) 兜底：抓原文页做正文提取（readable=extract 的主路径，也是前两条的降级）
   const ex = await extractFromUrl(url);
   if (ex && ex.text.length >= min) {
     return { html: ex.html, text: ex.text, source: 'extract', pageHtml: ex.pageHtml };
@@ -160,10 +169,14 @@ async function buildItem(s: SourceConfig, entry: RawEntry): Promise<Built | null
     summary: summaryText || undefined,
     url,
     publishedAt: entry.publishedAt,
-    contentLen: content.source === 'none' ? 0 : content.text.length,
+    contentLen: content.text.length && content.source !== 'pending-transcript'
+      ? content.text.length
+      : 0,
     contentSource: content.source,
     readingMinutes:
-      content.source === 'none' ? 0 : readingMinutes(content.text, s.lang),
+      content.source === 'none' || content.source === 'pending-transcript'
+        ? 0
+        : readingMinutes(content.text, s.lang),
     audioUrl: entry.audioUrl,
     durationSec: entry.durationSec,
     tags: entry.categories.slice(0, 5),
@@ -191,7 +204,7 @@ async function buildItem(s: SourceConfig, entry: RawEntry): Promise<Built | null
   }
 
   const detail: ItemDetail | undefined =
-    content.source === 'none'
+    content.source === 'none' || content.source === 'pending-transcript'
       ? undefined
       : {
           id,
@@ -209,7 +222,9 @@ async function buildItem(s: SourceConfig, entry: RawEntry): Promise<Built | null
 }
 
 async function processSource(s: SourceConfig): Promise<SourceResult> {
-  const base: SourceResult = { sourceId: s.id, ok: false, built: [], readable: 0, total: 0 };
+  const base: SourceResult = {
+    sourceId: s.id, ok: false, built: [], readable: 0, total: 0, pending: 0,
+  };
   try {
     const entries = await parseFeed(s.url);
     const targets = entries.slice(0, Math.max(s.limit, 1));
@@ -236,11 +251,16 @@ async function processSource(s: SourceConfig): Promise<SourceResult> {
     const keep = new Set(filtered.map((i) => i.id));
     const passed = built.filter((b) => keep.has(b.item.id));
 
-    // 可读率按"抓到的"算，是源的质量指标；真正入库的还要过 dropUnreadable
+    // 可读率按"抓到的"算，是源的质量指标；真正入库的还要过 dropUnreadable。
+    // 待转写的条目算"在途"，既不计入可读也不该被丢掉。
+    const isPending = (b: Built) => b.item.contentSource === 'pending-transcript';
     base.total = passed.length;
     base.readable = passed.filter((b) => b.item.contentLen > 0).length;
+    base.pending = passed.filter(isPending).length;
     base.built =
-      s.dropUnreadable === false ? passed : passed.filter((b) => b.item.contentLen > 0);
+      s.dropUnreadable === false
+        ? passed
+        : passed.filter((b) => b.item.contentLen > 0 || isPending(b));
     base.ok = true;
 
     const rate = base.total ? Math.round((base.readable / base.total) * 100) : 0;
@@ -251,6 +271,7 @@ async function processSource(s: SourceConfig): Promise<SourceResult> {
     const dropped = base.total - base.built.length;
     console.log(
       `[ok] ${s.name}: 抓 ${base.total} 可读 ${base.readable} (${rate}%)` +
+        `${base.pending ? ` 待转写 ${base.pending}` : ''}` +
         `${dropped ? ` 丢弃 ${dropped}` : ''} → 入库 ${base.built.length}  ${JSON.stringify(bySource)}`,
     );
   } catch (err) {
@@ -395,8 +416,12 @@ async function main(): Promise<void> {
   const date = todayKey();
   try {
     const existing = await store.readItems(date);
+    // 旧 schema 的残留条目（没有 contentSource）直接丢弃，
+    // 否则会带着已废弃的分类和缺失字段混进新数据里
+    const legacy = existing.filter((it) => !it.contentSource).length;
+    if (legacy) console.log(`[migrate] 丢弃 ${legacy} 条旧 schema 残留`);
     const merged = new Map<string, Item>();
-    for (const it of existing) merged.set(it.id, it);
+    for (const it of existing) if (it.contentSource) merged.set(it.id, it);
     for (const b of built) merged.set(b.item.id, b.item);
     const mergedItems = [...merged.values()].sort((a, b) => b.publishedAt - a.publishedAt);
 
@@ -436,6 +461,42 @@ async function main(): Promise<void> {
           }),
         ),
     );
+
+    // 待转写入队：中文播客没有任何现成文字稿，交给 transcribe 工作流异步处理
+    const queue = (await store.readQueue()) ?? { updatedAt: 0, tasks: [] as TranscribeTask[] };
+    const known = new Set(queue.tasks.map((t) => t.id));
+    // 已经转写完成的（detail 已存在）不要再入队
+    const newTasks: TranscribeTask[] = [];
+    for (const b of built) {
+      const it = b.item;
+      if (it.contentSource !== 'pending-transcript' || !it.audioUrl) continue;
+      if (known.has(it.id)) continue;
+      newTasks.push({
+        id: it.id,
+        sourceId: it.sourceId,
+        sourceName: it.sourceName,
+        title: it.title,
+        url: it.url,
+        audioUrl: it.audioUrl,
+        lang: it.lang,
+        date,
+        durationSec: it.durationSec,
+        enqueuedAt: Date.now(),
+        attempts: 0,
+      });
+    }
+    if (newTasks.length || queue.tasks.length) {
+      await store.writeQueue({
+        updatedAt: Date.now(),
+        tasks: [...queue.tasks, ...newTasks],
+      });
+    }
+    if (newTasks.length) {
+      const mins = newTasks.reduce((a, t) => a + Math.ceil((t.durationSec ?? 3600) / 60), 0);
+      console.log(
+        `[queue] 新入队 ${newTasks.length} 条待转写（约 ${mins} 分钟音频），队列共 ${queue.tasks.length + newTasks.length} 条`,
+      );
+    }
 
     // 健康度
     const now = Date.now();

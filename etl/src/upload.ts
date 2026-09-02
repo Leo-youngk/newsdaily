@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import * as R2 from './r2.js';
 import { config } from './config.js';
-import type { Item, ItemDetail, LatestIndex, AppConfig } from './types.js';
+import type { Item, ItemDetail, LatestIndex, AppConfig, TranscribeQueue } from './types.js';
 
 /** 统一存储层：DRY_RUN 时写本地 out/，否则写 R2 */
 
@@ -107,6 +107,14 @@ export async function writeConfig(cfg: AppConfig): Promise<void> {
 
 export async function readConfig(): Promise<AppConfig | null> {
   return await getJson<AppConfig>('config/sources.json');
+}
+
+export async function readQueue(): Promise<TranscribeQueue | null> {
+  return await getJson<TranscribeQueue>('meta/transcribe-queue.json');
+}
+
+export async function writeQueue(q: TranscribeQueue): Promise<void> {
+  await putJson('meta/transcribe-queue.json', q);
 }
 
 export async function writeHealth(health: unknown): Promise<void> {

@@ -6,13 +6,15 @@ export const CATEGORIES: Category[] = ['访谈', 'AI', '科技', '商业', '思�
 
 export type Lang = 'zh' | 'en';
 
-export type Readable = 'full' | 'transcript' | 'extract';
+export type Readable = 'full' | 'transcript' | 'extract' | 'transcribe';
 
 export type ContentSource =
   | 'feed'
   | 'transcript-tag'
   | 'transcript-page'
+  | 'transcript-whisper'
   | 'extract'
+  | 'pending-transcript'
   | 'none';
 
 export interface TranscriptRule {
@@ -96,5 +98,14 @@ export interface LatestIndex {
 
 /** 这条内容是不是逐字稿（决定卡片与阅读页的呈现方式） */
 export function isTranscript(item: Item): boolean {
-  return item.contentSource === 'transcript-tag' || item.contentSource === 'transcript-page';
+  return (
+    item.contentSource === 'transcript-tag' ||
+    item.contentSource === 'transcript-page' ||
+    item.contentSource === 'transcript-whisper'
+  );
+}
+
+/** 已入队但还没转写完 —— 卡片要如实标出来，不能让人点开扑空 */
+export function isPending(item: Item): boolean {
+  return item.contentSource === 'pending-transcript';
 }

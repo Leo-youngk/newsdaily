@@ -1,4 +1,4 @@
-import { isTranscript, type Item } from '../../types';
+import { isPending, isTranscript, type Item } from '../../types';
 import { timeAgo, categoryColor, readingLabel, durationLabel } from '../../lib/format';
 import Thumb from '../Thumb';
 import FavButton from '../FavButton';
@@ -27,6 +27,7 @@ export default function ArticleCard({
 }: Props) {
   const compact = density === 'compact';
   const transcript = isTranscript(item);
+  const pending = isPending(item);
 
   return (
     <article className={`border-b hairline ${compact ? 'py-3' : 'py-4'}`}>
@@ -73,6 +74,11 @@ export default function ArticleCard({
             {transcript && (
               <span className="chip bg-accent-wash px-2 py-0 text-accent dark:bg-[#241d16]">
                 逐字稿
+              </span>
+            )}
+            {pending && (
+              <span className="chip bg-paper-soft px-2 py-0 text-ink-faint dark:bg-[#232119]">
+                转写中
               </span>
             )}
             {item.audioUrl && item.durationSec ? (

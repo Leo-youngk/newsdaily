@@ -7,6 +7,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "tsx src/index.ts",
+    "transcribe": "tsx src/transcribe.ts",
     "dev:dry": "cross-env DRY_RUN=1 tsx src/index.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
