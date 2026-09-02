@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "news-pwa-worker",
+  "main": "worker/src/index.ts",
+  "compatibility_date": "2025-01-01",
+  "observability": {
+    "enabled": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "news-pwa-db",
+      "database_id": "21bc0d81-26bb-43ff-bd69-999656c43f06",
+      "migrations_dir": "worker/migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "NEWS_R2",
+      "bucket_name": "news-pwa"
+    }
+  ],
+  "vars": {
+    "AI_MODEL": "gpt-4o-mini",
+    "AI_FALLBACK_MODEL": ""
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "name": "深读 · 每日资讯",
+  "short_name": "深读",
+  "description": "一个克制、耐看的深度资讯聚合阅读器",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#fffdfa",
+  "theme_color": "#fffdfa",
+  "lang": "zh-CN",
+  "categories": ["news", "reading", "productivity"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

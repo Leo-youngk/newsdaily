@@ -1,0 +1,28 @@
+{
+  "name": "news-pwa-etl",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "采集流水线：抓取 RSS/Google News，正文提取、封面图回退、图片转存、去重、关键词过滤，产物写入 Cloudflare R2",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "tsx src/index.ts",
+    "dev:dry": "cross-env DRY_RUN=1 tsx src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.5.0",
+    "defuddle": "^0.19.3",
+    "linkedom": "^0.18.5",
+    "p-limit": "^6.1.0",
+    "rss-parser": "^3.13.0",
+    "sharp": "^0.33.5",
+    "undici": "^6.28.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.4",
+    "cross-env": "^7.0.3",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2"
+  }
+}
