@@ -133,6 +133,30 @@ with sync_playwright() as p:
     expect(page.get_by_text('中文标题甲',exact=True)).to_be_visible()
     page.get_by_role('button',name='清除',exact=True).click()
     page.locator('nav').last.get_by_role('button',name='目录',exact=True).click()
+    expect(page.get_by_role('button',name='AI目录分类',exact=True)).to_have_attribute('aria-pressed','true')
+    categories=page.get_by_role('navigation',name='目录分类').get_by_role('button')
+    assert categories.count()==8
+    page.set_viewport_size({'width':375,'height':812})
+    for button in categories.all():
+        expect(button).to_be_in_viewport()
+        assert button.bounding_box()['height']>=44
+    assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+    page.screenshot(path=str(OUT/'directory-categories-iphone.png'))
+    page.get_by_role('button',name='商业目录分类',exact=True).click()
+    expect(page.get_by_role('button',name='打开测试源目录',exact=True)).to_contain_text('1 篇')
+    assert page.get_by_role('button',name='打开测试专栏目录',exact=True).count()==0
+    page.get_by_role('button',name='打开测试源目录',exact=True).click()
+    expect(page.get_by_text('中文标题乙',exact=True)).to_be_visible()
+    assert page.get_by_text('中文标题甲',exact=True).count()==0
+    page.get_by_role('button',name='返回目录',exact=True).click()
+    expect(page.get_by_role('button',name='商业目录分类',exact=True)).to_have_attribute('aria-pressed','true')
+    page.get_by_role('button',name='作者',exact=True).click()
+    expect(page.get_by_text('这一分类暂时没有作者署名',exact=False)).to_be_visible()
+    page.get_by_role('button',name='AI目录分类',exact=True).click()
+    expect(page.get_by_role('button',name='打开测试作者目录',exact=True)).to_contain_text('2 篇')
+    page.get_by_role('button',name='节目与专栏',exact=True).click()
+    page.get_by_role('button',name='全部目录分类',exact=True).click()
+    page.set_viewport_size({'width':390,'height':844})
     expect(page.get_by_role('button',name='打开较早节目目录',exact=True)).to_be_visible()
     page.screenshot(path=str(OUT/'directory-iphone.png'))
     page.get_by_role('button',name='打开测试源目录',exact=True).click()
@@ -158,7 +182,7 @@ with sync_playwright() as p:
     assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
     page.locator('nav').last.get_by_role('button',name='收藏').click()
     expect(page.get_by_text('中文标题甲',exact=True)).to_be_visible()
-    passed('全保留期目录、同节目归并、跨来源作者、中英标题搜索与收藏阅读',state);ctx.close()
+    passed('iPhone 分类入口完整可见、分类篇数与文章隔离、返回保留分类、全保留期目录与中文标题阅读',state);ctx.close()
 
     slow_start=time.monotonic()
     ctx,page,state=setup(fail_titles='hang')

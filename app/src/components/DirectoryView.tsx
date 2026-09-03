@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import type { Item } from '../types';
+import { CATEGORIES, type Category, type Item } from '../types';
 import { buildDirectory, type DirectoryMode } from '../lib/directory';
 import { searchFilter } from '../lib/filter';
 import { timeAgo } from '../lib/format';
@@ -18,8 +18,15 @@ interface Props {
 
 export default function DirectoryView({ items, query, ...feedProps }: Props) {
   const [mode, setMode] = useState<DirectoryMode>('source');
+  const [category, setCategory] = useState<Category | '全部'>(() => CATEGORIES.find((value) => items.some((item) => item.category === value)) || '全部');
   const [selected, setSelected] = useState<string | null>(null);
-  const groups = useMemo(() => buildDirectory(items, mode), [items, mode]);
+  const directories = useMemo(() => {
+    const result = new Map<Category | '全部', ReturnType<typeof buildDirectory>>();
+    result.set('全部', buildDirectory(items, mode));
+    for (const value of CATEGORIES) result.set(value, buildDirectory(items.filter((item) => item.category === value), mode));
+    return result;
+  }, [items, mode]);
+  const groups = directories.get(category)!;
   const active = groups.find((group) => group.id === selected);
   const needle = query.trim().toLocaleLowerCase();
   const visible = groups.filter((group) => !needle || group.name.toLocaleLowerCase().includes(needle) || searchFilter(group.items, query).length > 0);
@@ -32,7 +39,7 @@ export default function DirectoryView({ items, query, ...feedProps }: Props) {
           <button className="mb-3 flex min-h-10 items-center gap-1 text-sm text-accent" onClick={() => setSelected(null)}>
             <span aria-hidden="true">‹</span> 返回目录
           </button>
-          <p className="mb-1 text-[0.7rem] text-ink-faint">{active.kind} · {active.items.length} 篇</p>
+          <p className="mb-1 text-[0.7rem] text-ink-faint">{category} · {active.kind} · {active.items.length} 篇</p>
           <h2 className="title-serif break-words text-2xl font-semibold">{active.name}</h2>
           <p className="mt-2 text-xs text-ink-muted">按发布时间排列 · {active.items.filter((item) => !feedProps.readSet.has(item.id)).length} 篇未读</p>
         </div>
@@ -47,7 +54,7 @@ export default function DirectoryView({ items, query, ...feedProps }: Props) {
     <section className="mx-auto flex h-full max-w-feed flex-col" aria-label="内容目录">
       <div className="shrink-0 px-4 pb-3 pt-4 sm:px-6">
         <div className="flex items-baseline justify-between gap-3">
-          <h2 className="title-serif text-2xl font-semibold">循着名字，继续读</h2>
+          <h2 className="title-serif text-2xl font-semibold">目录</h2>
           <span className="shrink-0 text-xs text-ink-faint">{visible.length} 个目录</span>
         </div>
         <div className="mt-4 flex gap-5 border-b hairline" aria-label="目录分组">
@@ -56,10 +63,18 @@ export default function DirectoryView({ items, query, ...feedProps }: Props) {
               className={`min-h-11 border-b-2 pb-2 text-sm ${mode === value ? 'border-accent font-medium text-accent' : 'border-transparent text-ink-muted'}`}>{label}</button>
           ))}
         </div>
-        <p className="mt-2 text-[0.7rem] text-ink-faint">{mode === 'author' ? '按原文署名归类；未提供署名的内容仍可在节目与专栏中找到。' : '收录当前保留的内容，每个节目或专栏一本目录。'}</p>
+        <nav className="mt-3 grid grid-cols-4 gap-2" aria-label="目录分类">
+          {(['全部', ...CATEGORIES] as const).map((value) => (
+            <button key={value} aria-label={`${value}目录分类`} aria-pressed={category === value}
+              onClick={() => { setCategory(value); setSelected(null); }}
+              className={`flex min-h-11 items-center justify-center gap-1.5 rounded-xl border text-sm ${category === value ? 'border-accent bg-accent/10 font-medium text-accent' : 'border-line text-ink-muted dark:border-[#2a2823]'}`}>
+              {value}<span aria-hidden="true" className="text-[0.65rem] opacity-70">{directories.get(value)!.length}</span>
+            </button>
+          ))}
+        </nav>
       </div>
-      <div className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-y-none px-4 pb-4 sm:px-6">
-        {!visible.length && <p className="py-8 text-center text-sm text-ink-muted">{needle ? '没有匹配的目录或文章。' : '暂时没有可归类的内容。'}</p>}
+      <div key={`${mode}:${category}:${query}`} className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-y-none px-4 pb-4 sm:px-6">
+        {!visible.length && <p className="py-8 text-center text-sm text-ink-muted">{needle ? '这一分类中没有匹配的目录或文章。' : mode === 'author' ? '这一分类暂时没有作者署名，可在节目与专栏中查看内容。' : '这一分类暂时没有内容。'}</p>}
         <ul className="divide-y divide-line dark:divide-[#2a2823]">
           {visible.map((group, i) => {
             const unread = group.items.filter((item) => !feedProps.readSet.has(item.id)).length;
