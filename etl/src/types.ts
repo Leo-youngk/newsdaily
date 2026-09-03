@@ -142,6 +142,13 @@ export interface TranscribeQueue {
    * 每次运行的预算管不住每天的总量（cron 一天跑 4 次），必须按天记账。
    */
   usage?: { utcDate: string; minutes: number };
+  /**
+   * 撞到 429 后的退避截止时间（epoch ms）。
+   * Cloudflare 的免费额度文档说 00:00 UTC 重置，但实测并不可靠
+   * （社区有多个「quota did not reset at 00:00 UTC」的报告），
+   * 所以不按自然日死等，改为定时退避重试，额度一恢复就能接着跑。
+   */
+  blockedUntil?: number;
 }
 
 export interface SourceHealth {

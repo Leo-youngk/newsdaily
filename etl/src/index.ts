@@ -531,9 +531,10 @@ async function main(): Promise<void> {
       await store.writeQueue({
         updatedAt: Date.now(),
         tasks: [...queue.tasks, ...newTasks],
-        // 必须原样带回：这里漏掉 usage 会把转写侧的当日额度记账清零，
+        // 必须原样带回：这里漏掉会把转写侧的额度记账与退避状态清零，
         // 采集每 2 小时跑一次，等于额度限制形同虚设
         usage: queue.usage,
+        blockedUntil: queue.blockedUntil,
       });
     }
     if (newTasks.length) {

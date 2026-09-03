@@ -20,6 +20,8 @@ import type { Item, ItemDetail, TranscribeQueue } from './types.js';
 const DAILY_CAP = parseInt(process.env.TRANSCRIBE_DAILY_CAP ?? '200', 10);
 const RUN_BUDGET = parseInt(process.env.TRANSCRIBE_MINUTES ?? '90', 10);
 const MAX_ATTEMPTS = 3;
+/** 撞到额度后等多久再试。比 cron 间隔略短，保证每次定时都会真的探一下 */
+const QUOTA_BACKOFF_MS = 3 * 60 * 60 * 1000;
 
 function utcDate(): string {
   return new Date().toISOString().slice(0, 10);
@@ -129,6 +131,11 @@ async function main(): Promise<void> {
     console.log('[done] 队列为空');
     return;
   }
+  if (queue.blockedUntil && Date.now() < queue.blockedUntil) {
+    const mins = Math.ceil((queue.blockedUntil - Date.now()) / 60000);
+    console.log(`[done] 上次撞到 Workers AI 额度，还需退避 ${mins} 分钟`);
+    return;
+  }
   if (budget <= 0) {
     console.log(`[done] 今日额度已用尽（${usedToday}/${DAILY_CAP} 分钟），留到明天`);
     return;
@@ -182,7 +189,9 @@ async function main(): Promise<void> {
       if (err instanceof QuotaExceededError) {
         quotaHit = true;
         console.warn(`[quota] ${err.message.slice(0, 120)}`);
-        console.warn('[quota] 本次提前结束，剩余任务留到额度重置后');
+        console.warn(
+          `[quota] 本次提前结束，${QUOTA_BACKOFF_MS / 3600000} 小时后再探`,
+        );
         break;
       }
       const msg = err instanceof Error ? err.message : String(err);
@@ -201,12 +210,10 @@ async function main(): Promise<void> {
   await store.writeQueue({
     updatedAt: Date.now(),
     tasks: remaining,
-    usage: {
-      utcDate: today,
-      // 撞到 429 说明 Cloudflare 侧已经见底，直接把本地账记满，
-      // 免得同一天后面几次运行继续白撞
-      minutes: quotaHit ? DAILY_CAP : usedToday + usedMinutes,
-    },
+    usage: { utcDate: today, minutes: usedToday + usedMinutes },
+    // 撞到 429 就退避一段时间再试，而不是把整天判死：
+    // Cloudflare 的重置时间实测不可靠，额度什么时候回来只能探
+    blockedUntil: quotaHit ? Date.now() + QUOTA_BACKOFF_MS : undefined,
   });
 
   console.log(
