@@ -39,6 +39,16 @@ function localConfigApi(): Plugin {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(readFileSync(file));
       });
+      server.middlewares.use('/api/titles', (req, res, next) => {
+        if (req.method !== 'GET') return next();
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ translations: {}, pending: 0, total: 0 }));
+      });
+      server.middlewares.use('/api/health', (req, res, next) => {
+        if (req.method !== 'GET') return next();
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ ok: true, ts: Date.now() }));
+      });
     },
   };
 }

@@ -1,8 +1,9 @@
 // Worker API 客户端：所有数据与图片均通过 Worker（同源 /data/*），避免 CORS 与防盗链
 
 export const API_BASE: string =
-  (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/+$/, '') ||
-  'https://news-pwa-worker.if5v.workers.dev';
+  typeof import.meta.env.VITE_API_BASE === 'string'
+    ? import.meta.env.VITE_API_BASE.replace(/\/+$/, '')
+    : (import.meta.env.DEV ? '' : 'https://news-pwa-worker.if5v.workers.dev');
 export interface TitleIndex {
   translations: Record<string, { original: string; text: string }>;
   pending: number;
