@@ -23,6 +23,7 @@
     /* iOS Safari 不支持 overscroll-behavior，横向滑动只能靠 touch-action 拦 */
     touch-action: pan-y;
     overscroll-behavior: none;
+    overflow: hidden;
   }
   /* 分类 Tab 那条横向滚动区要单独放行 */
   .allow-pan-x {
@@ -105,6 +106,23 @@
 }
 .prose-news p {
   margin: 0 0 1.25em;
+}
+.translation-text {
+  display: block;
+  margin-top: 0.5em;
+  padding: 0.3em 0 0.3em 0.8em;
+  border-left: 2px solid currentColor;
+  opacity: 0.9;
+  font-size: 0.98em;
+  font-weight: normal;
+}
+.translation-pending {
+  display: block;
+  min-height: 2.5em;
+  margin-top: 0.5em;
+  font-size: 0.72rem;
+  font-weight: normal;
+  opacity: 0.55;
 }
 .prose-news h1,
 .prose-news h2,

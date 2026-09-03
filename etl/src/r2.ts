@@ -42,20 +42,17 @@ async function r2Fetch(
 ): Promise<Response> {
   let lastErr: unknown;
   for (let attempt = 0; attempt <= retries; attempt++) {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 30000);
     try {
-      const res = await fetch(url, { ...init, signal: ctrl.signal });
+      const res = await fetch(url, { ...init, signal: AbortSignal.timeout(30000) });
       // 5xx 与 429 重试，其余（含 404）交给调用方判断
       if (res.status >= 500 || res.status === 429) {
         lastErr = new Error(`R2 ${ctx} HTTP ${res.status}`);
+        await res.body?.cancel();
       } else {
         return res;
       }
     } catch (err) {
       lastErr = err;
-    } finally {
-      clearTimeout(timer);
     }
     if (attempt < retries) {
       await new Promise((r) => setTimeout(r, 800 * 2 ** attempt));

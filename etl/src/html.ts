@@ -30,11 +30,11 @@ const ALLOWED_ATTRS: Record<string, Set<string>> = {
 function safeUrl(raw: string | null, base: string): string | null {
   if (!raw) return null;
   const v = raw.trim();
-  // 只放行 http(s) 与内联图片，挡掉 javascript: / vbscript: / data:text-html 等
-  if (/^(javascript|vbscript|file):/i.test(v)) return null;
-  if (/^data:/i.test(v)) return /^data:image\//i.test(v) ? v : null;
   try {
-    return new URL(v, base).toString();
+    const url = new URL(v, base);
+    if (url.protocol === 'http:' || url.protocol === 'https:') return url.toString();
+    if (url.protocol === 'data:' && /^data:image\/(?:png|jpeg|gif|webp|avif);base64,/i.test(v)) return v;
+    return null;
   } catch {
     return null;
   }
@@ -112,7 +112,7 @@ export function cleanContentHtml(
   };
   for (const child of Array.from(root.children as any) as any[]) walk(child);
 
-  const cleaned = root.innerHTML.replace(/\s+/g, ' ').trim();
+  const cleaned = root.innerHTML.trim();
   const text = (root.textContent ?? '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
   return { html: cleaned, text };
 }

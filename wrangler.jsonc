@@ -1,10 +1,14 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "news-pwa-worker",
+  "account_id": "0aa4cd8c1c7374bb05b834b50f52b5d3",
   "main": "worker/src/index.ts",
   "compatibility_date": "2025-01-01",
   "observability": {
     "enabled": true
+  },
+  "triggers": {
+    "crons": ["* * * * *"]
   },
   "d1_databases": [
     {
@@ -20,12 +24,15 @@
       "bucket_name": "news-pwa"
     }
   ],
+  "ai": {
+    "binding": "AI"
+  },
   "vars": {
-    "AI_MODEL": "glm-5.3-flash",
-    "AI_FALLBACK_MODEL": "deepseek-v4-flash",
+    "AI_MODEL": "gemini-3.5-flash",
+    "AI_FALLBACK_MODEL": "gemini-3.1-flash-lite",
     // 允许调用 AI 与读写配置的前端来源（逗号分隔）。
     // /data/* 是公开只读数据，不受此限制。
-    "CORS_ORIGIN": "https://newsdaily-pti.pages.dev"
+    "CORS_ORIGIN": "https://news-pwa-e1a.pages.dev,https://newsdaily-pti.pages.dev,http://localhost:5173"
   }
   // 需要用 `wrangler secret put` 配置的（不要写进本文件）：
   //   ADMIN_TOKEN   AI 调用与配置写入的令牌，未配置时 /api/ai/* 与 PUT /api/config 一律 503

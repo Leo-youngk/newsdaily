@@ -1,7 +1,13 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { isPending, isTranscript, type Item, type ItemDetail } from '../types';
-import { dataApi } from '../lib/api';
-import { summarize, translateBody, translateTitle, type AiResult } from '../lib/ai';
+import { readingDetail } from '../lib/archive';
+import { createReaderDocument, translatedHtml, type ReaderDocument } from '../lib/reader-document';
+import { useTranslation } from '../lib/translation-session';
+import {
+  summarize,
+  translateTitle,
+  type AiResult,
+} from '../lib/ai';
 import { fullDate, categoryColor, readingLabel } from '../lib/format';
 import { prefs, type FontScale } from '../lib/prefs';
 
@@ -45,13 +51,34 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
   const scrollRef = useRef<HTMLDivElement>(null);
   const restoredRef = useRef(false);
   const saveTimer = useRef<number | null>(null);
+  const latestProgress = useRef(0);
   const [progress, setProgress] = useState(0);
   const summary = useAi();
   const titleTr = useAi();
-  const bodyTr = useAi();
+
+  const [bilingualMode, setBilingualMode] = useState<'original' | 'bilingual' | 'zh'>('original');
+  const [readerDocument, setReaderDocument] = useState<ReaderDocument | null>(null);
+  const [documentError, setDocumentError] = useState<string | null>(null);
+  const translation = useTranslation(item.id, readerDocument);
+  useEffect(() => {
+    let alive = true;
+    if (detail) createReaderDocument(detail.contentHtml)
+      .then((doc) => { if (alive) setReaderDocument(doc); })
+      .catch(() => { if (alive) setDocumentError('正文解析暂时失败，请重新加载文章'); });
+    return () => { alive = false; };
+  }, [detail]);
+  const readingHtml = useMemo(() => {
+    if (!detail) return '';
+    return bilingualMode === 'original' || !readerDocument
+      ? detail.contentHtml : translatedHtml(readerDocument, translation.results, bilingualMode);
+  }, [detail, readerDocument, bilingualMode, translation.results]);
+  const startBilingual = (mode: 'bilingual' | 'zh') => {
+    setBilingualMode(mode);
+    void translation.start();
+  };
 
   // 逐字稿段落带 data-t 秒数：点一下就把音频跳到那儿，边听边读
-  const seekFromParagraph = (e: React.MouseEvent<HTMLDivElement>) => {
+  const seekFromParagraph = (e: React.MouseEvent<HTMLElement>) => {
     const el = (e.target as HTMLElement).closest<HTMLElement>('[data-t]');
     const audio = audioRef.current;
     if (!el || !audio) return;
@@ -66,8 +93,7 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
     if (item.contentLen > 0) {
       setLoadingDetail(true);
       setLoadFailed(false);
-      dataApi
-        .detail(item.id)
+      readingDetail(item.id)
         .then((d) => {
           if (!alive) return;
           setDetail(d);
@@ -92,6 +118,7 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
     if (!el) return;
     const max = el.scrollHeight - el.clientHeight;
     const ratio = max > 0 ? Math.min(1, el.scrollTop / max) : 0;
+    latestProgress.current = ratio;
     setProgress(ratio);
     if (!restoredRef.current) return; // 恢复完成前别把 0 写回去
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
@@ -118,10 +145,7 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
   useEffect(
     () => () => {
       if (saveTimer.current) window.clearTimeout(saveTimer.current);
-      const el = scrollRef.current;
-      if (!el || !restoredRef.current) return;
-      const max = el.scrollHeight - el.clientHeight;
-      prefs.setProgress(item.id, max > 0 ? Math.min(1, el.scrollTop / max) : 0);
+      if (restoredRef.current) prefs.setProgress(item.id, latestProgress.current);
     },
     [item.id],
   );
@@ -223,19 +247,60 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
           />
         )}
 
-        <div className="mt-4 flex flex-wrap gap-2">
-          <button className="btn-outline" onClick={() => summary.run(() => summarize(item.id))} disabled={!item.contentLen}>
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <button className="btn-outline" onClick={() => summary.run(() => summarize(item.id))} disabled={!item.contentLen || summary.status === 'loading'}>
             <Dot status={summary.status} /> 生成摘要
           </button>
           {item.lang === 'en' && (
-            <button className="btn-outline" onClick={() => titleTr.run(() => translateTitle(item.id, item.title))}>
+            <button className="btn-outline" disabled={titleTr.status === 'loading'} onClick={() => titleTr.run(() => translateTitle(item.id, item.title))}>
               <Dot status={titleTr.status} /> 翻译标题
             </button>
           )}
+
+          {/* 核心功能：双语对照/仅中文/原文三档切换 */}
           {item.lang === 'en' && item.contentLen > 0 && (
-            <button className="btn-outline" onClick={() => bodyTr.run(() => translateBody(item.id))}>
-              <Dot status={bodyTr.status} /> 翻译全文
-            </button>
+            <div className="flex items-center gap-1 rounded-full border hairline p-0.5 bg-paper-soft text-xs dark:bg-[#1b1a16] shadow-sm">
+              <button
+                className={`px-3 py-1 rounded-full font-medium transition-all ${
+                  bilingualMode === 'original'
+                    ? 'bg-paper text-accent shadow-xs dark:bg-[#25231c]'
+                    : 'text-ink-faint hover:text-ink'
+                }`}
+                onClick={() => setBilingualMode('original')}
+              >
+                原文
+              </button>
+              <button
+                className={`px-3 py-1 rounded-full font-medium transition-all flex items-center gap-1.5 ${
+                  bilingualMode === 'bilingual'
+                    ? 'bg-paper text-accent shadow-xs dark:bg-[#25231c]'
+                    : 'text-ink-faint hover:text-ink'
+                }`}
+                disabled={!readerDocument} onClick={() => startBilingual('bilingual')}
+              >
+                {translation.running ? (
+                  <>
+                    <span className="inline-block h-2 w-2 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+                    <span>对照中 {`${translation.completed}/${translation.total}`}</span>
+                  </>
+                ) : (
+                  <>
+                    <span>双语对照</span>
+                    {translation.completed > 0 && <span className="h-1.5 w-1.5 rounded-full bg-accent" />}
+                  </>
+                )}
+              </button>
+              <button
+                className={`px-3 py-1 rounded-full font-medium transition-all ${
+                  bilingualMode === 'zh'
+                    ? 'bg-paper text-accent shadow-xs dark:bg-[#25231c]'
+                    : 'text-ink-faint hover:text-ink'
+                }`}
+                disabled={!readerDocument} onClick={() => startBilingual('zh')}
+              >
+                仅中文
+              </button>
+            </div>
           )}
         </div>
 
@@ -251,14 +316,19 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
             </div>
           )}
           {detail ? (
-            <>
-              <div
-                className={`prose-news ${SCALE_CLASS[scale]}`}
+            <div>
+              {(translation.requested || documentError) && (
+                <div className="mb-5 min-h-12 text-xs leading-relaxed text-ink-muted" role="status">
+                  <p>{translation.complete ? '全文翻译完成' : translation.requested ? `自动翻译 ${translation.completed}/${translation.total} 段` : ''}</p>
+                  {translation.message && <p>{translation.message}</p>}
+                  {translation.warning && <p>{translation.warning}</p>}
+                  {documentError && <p>{documentError}</p>}
+                </div>
+              )}
+              <div className={`prose-news ${SCALE_CLASS[scale]}`}
                 onClick={item.audioUrl ? seekFromParagraph : undefined}
-                dangerouslySetInnerHTML={{ __html: detail.contentHtml }}
-              />
-              <AiBlock label="全文译文" state={bodyTr} />
-            </>
+                dangerouslySetInnerHTML={{ __html: readingHtml }} />
+            </div>
           ) : (
             !loadingDetail && (
               <div className="rounded-2xl border hairline bg-paper-soft p-5 dark:bg-[#1b1a16]">
@@ -315,9 +385,14 @@ function AiBlock({ label, state }: { label: string; state: ReturnType<typeof use
     <div className="mt-4 rounded-2xl border border-accent/20 bg-accent-wash/60 p-4 dark:border-accent/25 dark:bg-[#241d16]">
       <div className="mb-1.5 flex items-center gap-2 text-[0.7rem] font-semibold uppercase tracking-wide text-accent">
         {label}
+        {state.result.fallback && <span>已切换备用模型</span>}
         {state.result.cached && <span className="chip bg-white/60 text-ink-faint dark:bg-black/20">缓存</span>}
         {state.result.model && <span className="chip bg-white/60 text-ink-faint dark:bg-black/20">{state.result.model}</span>}
+        {state.result.fallback && <span className="chip bg-amber-500/20 text-amber-700 dark:text-amber-300">备用通道</span>}
       </div>
+      {state.result.warning && (
+        <p className="mb-2 text-xs text-amber-600 dark:text-amber-400">{state.result.warning}</p>
+      )}
       {state.status === 'loading' && (
         <div className="space-y-2">
           <div className="skeleton h-3.5 w-full rounded" />

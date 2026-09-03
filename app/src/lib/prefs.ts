@@ -107,7 +107,7 @@ export const prefs = {
       // 配额满了就算了，进度不是必须品，不能因此让阅读页崩掉
     }
   },
-  // 管理令牌（用于 PUT /api/config）
+  // 管理令牌（用于 PUT /api/config 与 AI 服务）
   getAdminToken(): string {
     return localStorage.getItem(KEY.adminToken) || '';
   },

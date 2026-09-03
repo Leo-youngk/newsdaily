@@ -19,3 +19,41 @@ export function buildTranslateUserPrompt(text: string): string {
   const clipped = text.slice(0, 12000);
   return `请翻译以下内容为简体中文：\n\n${clipped}`;
 }
+
+export const BATCH_TRANSLATE_SYSTEM =
+  '你是一个专业的科技与商业访谈中英翻译助手。' +
+  '将用户提供的按编号标记的英文段落翻译成地道、流畅的简体中文，保持人名、公司名、专业术语的准确性。' +
+  '输出必须严格保留原有的编号标记（如「[0] 译文」），每个编号对应一段。' +
+  '不要合并段落，不要遗漏任何段落编号，不要输出任何额外的说明或前缀。';
+
+export function buildBatchTranslatePrompt(paragraphs: string[]): string {
+  const lines = paragraphs.map((p, i) => `[${i}] ${p.replace(/\r?\n+/g, ' ').trim()}`);
+  return `请将以下 ${paragraphs.length} 个段落逐段翻译为简体中文，并严格按照 [编号] 格式输出：\n\n${lines.join('\n')}`;
+}
+
+export function parseBatchTranslateResponse(response: string, expectedCount: number): string[] {
+  const result: string[] = new Array(expectedCount).fill('');
+  const lines = response.split('\n');
+  let currentIdx = -1;
+  let currentText = '';
+
+  for (const line of lines) {
+    const match = line.match(/^\s*\[(\d+)\]\s*(.*)$/);
+    if (match) {
+      if (currentIdx >= 0 && currentIdx < expectedCount) {
+        result[currentIdx] = currentText.trim();
+      }
+      currentIdx = parseInt(match[1], 10);
+      currentText = match[2] || '';
+    } else if (currentIdx >= 0) {
+      currentText += (currentText ? ' ' : '') + line.trim();
+    }
+  }
+  if (currentIdx >= 0 && currentIdx < expectedCount) {
+    result[currentIdx] = currentText.trim();
+  }
+
+  // 兜底：如果由于某种原因某些段落为空，直接用原文兜底或保留空字符
+  return result;
+}
+

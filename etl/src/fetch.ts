@@ -12,13 +12,8 @@ async function withTimeout(
   init: RequestInit,
   timeout: number,
 ): Promise<Response> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeout);
-  try {
-    return await fetch(url, { ...init, signal: ctrl.signal });
-  } finally {
-    clearTimeout(timer);
-  }
+  // signal 必须活到响应体消费完；收到响应头不能撤销超时。
+  return fetch(url, { ...init, signal: AbortSignal.timeout(timeout) });
 }
 
 /** 带重试与随机 UA 的抓取，返回 Response（调用方决定如何消费） */

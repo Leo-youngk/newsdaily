@@ -40,7 +40,7 @@ const TABS: { id: Tab; label: string; icon: (active: boolean) => React.ReactNode
 /** 移动端底部 Tab + 安全区适配 */
 export default function BottomNav({ tab, onChange, savedCount }: Props) {
   return (
-    <nav className="pb-safe fixed inset-x-0 bottom-0 z-30 border-t hairline bg-paper/92 backdrop-blur-md dark:bg-[#14130f]/92">
+    <nav className="pb-safe relative z-30 shrink-0 border-t hairline bg-paper/92 backdrop-blur-md dark:bg-[#14130f]/92">
       <div className="mx-auto flex max-w-feed">
         {TABS.map((t) => {
           const active = t.id === tab;

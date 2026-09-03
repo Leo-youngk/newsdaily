@@ -3,6 +3,7 @@
 export const API_BASE: string =
   (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/+$/, '') ||
   'https://news-pwa-worker.if5v.workers.dev';
+let configEtag: string | null = null;
 
 /** 把 Item.image（形如 /data/img/x.webp）解析为绝对 URL */
 export function resolveImage(image?: string): string | undefined {
@@ -17,8 +18,9 @@ async function getJson<T>(path: string, cache: RequestCache = 'default'): Promis
   let lastErr: unknown;
   for (let i = 0; i < 2; i++) {
     try {
-      const res = await fetch(`${API_BASE}${path}`, { cache });
+      const res = await fetch(`${API_BASE}${path}`, { cache, signal: AbortSignal.timeout(30000) });
       if (!res.ok) throw new Error(`${path} → HTTP ${res.status}`);
+      if (path === '/api/config') configEtag = res.headers.get('ETag');
       return (await res.json()) as T;
     } catch (e) {
       lastErr = e;
@@ -29,10 +31,11 @@ async function getJson<T>(path: string, cache: RequestCache = 'default'): Promis
 }
 
 export const dataApi = {
-  index: () => getJson<import('../types').LatestIndex>('/data/index/latest.json'),
+  index: () => getJson<import('../types').LatestIndex>('/data/index/latest.json', 'no-cache'),
   items: (date: string) =>
     getJson<{ date: string; items: import('../types').Item[] }>(
       `/data/items/${date}.json`,
+      'no-cache',
     ),
   detail: (id: string) =>
     getJson<import('../types').ItemDetail>(`/data/detail/${id}.json`),
@@ -48,11 +51,14 @@ export async function putConfig(
     headers: {
       'Content-Type': 'application/json',
       'x-admin-token': adminToken,
+      ...(configEtag ? { 'If-Match': configEtag } : {}),
     },
     body: JSON.stringify(cfg),
+    signal: AbortSignal.timeout(30000),
   });
   if (!res.ok) {
     const t = await res.text().catch(() => '');
     throw new Error(`保存配置失败 HTTP ${res.status}: ${t.slice(0, 120)}`);
   }
+  configEtag = res.headers.get('ETag');
 }

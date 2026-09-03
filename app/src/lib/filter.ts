@@ -57,8 +57,8 @@ export function matchItem(item: Item, f: ParsedFilter): boolean {
 /** 命中预览：返回匹配条数 */
 export function previewCount(items: Item[], keywords: string[]): number {
   const f = parseKeywords(keywords);
-  if (!f.any.length && !f.must.length && !f.exclude.length) return items.length;
-  return items.filter((it) => matchItem(it, f)).length;
+  const count = items.filter((it) => matchItem(it, f)).length;
+  return f.limit == null ? count : Math.min(count, f.limit);
 }
 
 /** 标题实时搜索过滤 */

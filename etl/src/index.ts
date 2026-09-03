@@ -88,13 +88,14 @@ async function loadConfig(): Promise<AppConfig> {
   // 此前是整份配置二选一：一旦 R2 版本号追平种子，改 sources.seed.json 里的
   // url / readable / 文稿规则就再也不生效了（Import AI 换域名时就撞上了）。
   const userBySource = new Map(remote.sources.map((s) => [s.id, s]));
+  const isVersionBump = (remote.version ?? 0) < seed.version;
   const merged: SourceConfig[] = seed.sources.map((def) => {
     const u = userBySource.get(def.id);
     return u
       ? {
           ...def,
           enabled: u.enabled ?? def.enabled,
-          limit: u.limit ?? def.limit,
+          limit: isVersionBump ? def.limit : (u.limit ?? def.limit),
           keywords: u.keywords ?? def.keywords,
         }
       : def;
@@ -383,7 +384,8 @@ async function cleanup(retainedShards: string[], cutoffMs: number): Promise<void
   const keepDetail = new Set<string>();
   const keepImg = new Set<string>();
   for (const date of retainedShards) {
-    const items = await store.readItems(date).catch(() => [] as Item[]);
+    // 只有完整读取全部引用后才能删除；404、坏 JSON、网络异常均中止。
+    const items = await store.readItems(date, true);
     for (const it of items) {
       // 只要条目还在保留期内的分片里，它的 detail 就一律保留。
       // 原来用 contentLen > 0 作判据，结果上游一旦把条目误标成
@@ -439,7 +441,8 @@ async function main(): Promise<void> {
 
   const health = (await store.readHealth<{ sources: Record<string, SourceHealth> }>())
     ?.sources ?? {};
-  const active = sources.filter((s) => (health[s.id]?.consecutive_fail ?? 0) < 5);
+  // 失败源仍会再次探测。采集本身每两小时才运行，无需永久封禁。
+  const active = sources;
   console.log(
     `[plan] ${active.length} 个源：` +
       Object.entries(

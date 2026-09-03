@@ -63,7 +63,7 @@ export async function getJson<T>(key: string): Promise<T | null> {
   try {
     return JSON.parse(t) as T;
   } catch {
-    return null;
+    throw new Error(`存储对象 ${key} 不是有效 JSON`);
   }
 }
 
@@ -84,9 +84,16 @@ export async function writeItems(date: string, items: Item[]): Promise<void> {
   await putJson(`items/${date}.json`, { date, generatedAt: Date.now(), items });
 }
 
-export async function readItems(date: string): Promise<Item[]> {
+export async function readItems(date: string, required = false): Promise<Item[]> {
   const data = await getJson<{ items: Item[] }>(`items/${date}.json`);
-  return data?.items ?? [];
+  if (data == null) {
+    if (required) throw new Error(`保留分片 items/${date}.json 不存在，停止清理`);
+    return [];
+  }
+  if (!Array.isArray(data.items) || data.items.some((it) => !it || typeof it.id !== 'string')) {
+    throw new Error(`分片 items/${date}.json 格式错误`);
+  }
+  return data.items;
 }
 
 export async function writeDetail(detail: ItemDetail): Promise<void> {
