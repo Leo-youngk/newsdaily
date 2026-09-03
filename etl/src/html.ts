@@ -89,6 +89,13 @@ export function cleanContentHtml(
         el.remove();
         return;
       }
+      // PWA 走 https，明文 http 的图必然被浏览器当混合内容拦掉，
+      // 留着只会在正文里排出一串 16px 的破图占位符。
+      // 微信系的源（人物、三联、财新等）正文里这种图能占到一半。
+      if (src.startsWith('http:')) {
+        el.remove();
+        return;
+      }
       el.setAttribute('src', src);
       el.setAttribute('loading', 'lazy');
       el.setAttribute('decoding', 'async');
