@@ -33,6 +33,15 @@ export default function SettingsView({ items, density, sort, onDensity, onSort }
   const [theme, setTheme] = useState<ThemeMode>(prefs.getTheme());
   const [kwSourceId, setKwSourceId] = useState('');
   const [kwText, setKwText] = useState('');
+  const changeToken = (value: string) => {
+    setToken(value);
+    try {
+      prefs.setAdminToken(value.trim());
+      setMsg({ kind: 'ok', text: '管理令牌已保存在本机' });
+    } catch {
+      setMsg({ kind: 'err', text: '本机存储不可用，令牌未能保存' });
+    }
+  };
 
   useEffect(() => {
     dataApi
@@ -122,7 +131,11 @@ export default function SettingsView({ items, density, sort, onDensity, onSort }
       </div>
     );
   if (!config)
-    return <div className="p-6 text-center text-sm text-ink-muted">无法加载配置</div>;
+    return <div className="space-y-4 p-6 text-sm text-ink-muted">
+      <p>{msg?.text || '无法加载配置，请稍后重新进入设置。'}</p>
+      <label>管理令牌<input className="input mt-2" type="password" value={token} onChange={(e) => changeToken(e.target.value)} /></label>
+      <p>令牌输入后自动保存在本机。</p>
+    </div>;
 
   const enabledCount = config.sources.filter(
     (s) => s.enabled && config.categories[s.category] !== false,
@@ -198,7 +211,7 @@ export default function SettingsView({ items, density, sort, onDensity, onSort }
           <Segmented
             value={density}
             options={[['standard', '标准'], ['compact', '紧凑']]}
-            onChange={(v) => onDensity(v as 'standard' | 'compact')}
+            onChange={(v) => { onDensity(v as 'standard' | 'compact'); setDirty(true); }}
           />
         </Field>
 
@@ -206,7 +219,7 @@ export default function SettingsView({ items, density, sort, onDensity, onSort }
           <Segmented
             value={sort}
             options={[['time', '时间'], ['source', '来源']]}
-            onChange={(v) => onSort(v as 'time' | 'source')}
+            onChange={(v) => { onSort(v as 'time' | 'source'); setDirty(true); }}
           />
         </Field>
 
@@ -224,8 +237,9 @@ export default function SettingsView({ items, density, sort, onDensity, onSort }
             type="password"
             value={token}
             placeholder="Worker 的 ADMIN_TOKEN"
-            onChange={(e) => setToken(e.target.value)}
+            onChange={(e) => changeToken(e.target.value)}
           />
+          <p className="mt-1 text-xs text-ink-faint">输入后自动保存在本机，不随配置上传。</p>
         </Field>
       </section>
 

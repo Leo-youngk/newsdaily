@@ -419,6 +419,7 @@ app.put('/api/config', async (c) => {
     ...(c.req.header('If-Match') ? { onlyIf: { etagMatches: c.req.header('If-Match')! } } : {}),
   });
   if (!obj) return c.json({ error: '配置已被其他操作更新，请重新加载设置后再保存' }, 409);
+  c.header('ETag', obj.httpEtag);
   return c.json({ ok: true, updatedAt: config.updatedAt });
 });
 
