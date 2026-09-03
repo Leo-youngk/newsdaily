@@ -10,6 +10,7 @@
     "transcribe": "tsx src/transcribe.ts",
     "transcribe:local": "cross-env TRANSCRIBE_BACKEND=local tsx src/transcribe.ts",
     "dev:dry": "cross-env DRY_RUN=1 tsx src/index.ts",
+    "seed:top50": "tsx scripts/build-top50.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
