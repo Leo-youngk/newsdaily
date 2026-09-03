@@ -69,7 +69,7 @@ export const prefs = {
   toggleFavorite(id: string): Set<string> {
     const s = readSet(KEY.favorites);
     s.has(id) ? s.delete(id) : s.add(id);
-    writeSet(KEY.favorites, s);
+    localStorage.setItem(KEY.favorites, JSON.stringify([...s]));
     return s;
   },
   // 已读

@@ -87,7 +87,7 @@ export async function translateParagraphBatch(
     if (!missing.length) break;
     const model = models[attempt];
     if (attempt > 0) {
-      warnings.add(`部分段落已切换备用模型 ${model}`);
+      warnings.add(`部分段落已尝试备用模型 ${model}`);
       console.warn('[translation] fallback', { model, paragraphs: missing.length });
     }
     try {
@@ -127,12 +127,13 @@ export async function translateParagraphBatch(
     }
   }
 
-  // 3. Level 2 兜底：Cloudflare Workers AI
+  // 一轮最多补三段短文本，控制最坏耗时在任务租约内。
+  // 长段会进入自动拆分重试，防止专用翻译模型截断长输入。
   const stillMissing = inputs
     .map((_p, i) => i)
-    .filter((i) => !results[i].text && !results[i].error);
+    .filter((i) => !results[i].text && !results[i].error && inputs[i].text.length <= 800).slice(0, 3);
   if (stillMissing.length > 0 && env.AI) {
-    warnings.add('外部 AI 异常，部分段落已切换至 Cloudflare Workers AI 备用通道');
+    warnings.add('外部 AI 异常，部分段落已尝试 Cloudflare Workers AI 备用通道');
     console.info('[translation] attempting Workers AI for missing paragraphs', {
       count: stillMissing.length,
     });
@@ -157,6 +158,7 @@ export async function translateParagraphBatch(
                 results[i].cacheSaved = true;
               } catch (writeErr) {
                 console.warn('[translation] cache write failed', writeErr);
+                warnings.add('段落复用缓存写入失败，译文将随任务保存');
               }
             }
           } catch (cfErr) {
@@ -170,12 +172,12 @@ export async function translateParagraphBatch(
     }
   }
 
-  // 4. Level 3 终极兜底：Google 免费翻译通道（确保 100% 译出中文）
+  // 公共翻译通道也可能失败；未完成的段落交回持久化任务继续重试。
   const finalMissing = inputs
     .map((_p, i) => i)
-    .filter((i) => !results[i].text && !results[i].error);
+    .filter((i) => !results[i].text && !results[i].error && inputs[i].text.length <= 800).slice(0, 3);
   if (finalMissing.length > 0) {
-    warnings.add('大模型不可用，部分段落已自动由 Google 翻译引擎保底');
+    warnings.add('大模型不可用，部分段落已尝试 Google 翻译引擎');
     console.info('[translation] attempting Google Translate engine for missing paragraphs', {
       count: finalMissing.length,
     });
@@ -199,6 +201,7 @@ export async function translateParagraphBatch(
                 results[i].cacheSaved = true;
               } catch (writeErr) {
                 console.warn('[translation] cache write failed', writeErr);
+                warnings.add('段落复用缓存写入失败，译文将随任务保存');
               }
             }
           } catch (gErr) {

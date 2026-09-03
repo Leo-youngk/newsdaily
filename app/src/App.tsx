@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNews } from './lib/store';
 import { prefs } from './lib/prefs';
+import { savedArticles, restoreSaved, saveArticle, removeArticle } from './lib/archive';
 import { searchFilter } from './lib/filter';
 import { CATEGORIES, type Category, type Item } from './types';
 import CategoryTabs from './components/CategoryTabs';
@@ -19,6 +20,24 @@ export default function App() {
   const [query, setQuery] = useState('');
   const [reader, setReader] = useState<Item | null>(null);
   const [favorites, setFavorites] = useState<Set<string>>(() => prefs.getFavorites());
+  const [savedItems, setSavedItems] = useState<Item[]>([]);
+  const [favoriteMessage, setFavoriteMessage] = useState<string | null>(null);
+  const [archiveReady, setArchiveReady] = useState(false);
+  const favoriteBusy = useRef(new Set<string>());
+  useEffect(() => {
+    let alive = true;
+    setArchiveReady(false);
+    const ids = [...favorites];
+    void savedArticles(ids).then((records) => {
+      if (alive) setSavedItems(records.map((r) => r.item));
+      return news.index ? restoreSaved(ids, news.items, [...news.index.dates].sort().reverse()) : records;
+    }).then((records) => {
+      if (alive) setSavedItems(records.map((r) => r.item));
+    }).catch((err) => {
+      if (alive) setFavoriteMessage(`收藏正文暂未完整保存：${err instanceof Error ? err.message : String(err)}`);
+    }).finally(() => { if (alive) setArchiveReady(true); });
+    return () => { alive = false; };
+  }, [favorites, news.items, news.index]);
   const [readSet, setReadSet] = useState<Set<string>>(() => prefs.getRead());
   const [progress, setProgress] = useState<Record<string, number>>(() => prefs.getProgress());
   // 密度与排序放在 App 状态里：原来只监听 storage 事件，
@@ -51,9 +70,10 @@ export default function App() {
   }, [news.items]);
 
   const visibleItems = useMemo(() => {
-    let list = news.items;
-    if (tab === 'saved') list = list.filter((i) => favorites.has(i.id));
-    if (category !== ALL) list = list.filter((i) => i.category === category);
+    let list = tab === 'saved'
+      ? [...new Map([...savedItems, ...news.items.filter((i) => favorites.has(i.id))].map((i) => [i.id, i])).values()]
+      : news.items;
+    if (tab === 'feed' && category !== ALL) list = list.filter((i) => i.category === category);
     list = searchFilter(list, query);
     if (sort === 'source') {
       list = [...list].sort(
@@ -62,7 +82,8 @@ export default function App() {
       );
     }
     return list;
-  }, [news.items, tab, category, query, favorites, sort]);
+  }, [news.items, savedItems, tab, category, query, favorites, sort]);
+  const unavailableFavorites = [...favorites].filter((id) => !savedItems.some((i) => i.id === id) && !news.byId.has(id)).length;
 
   const closeReader = useCallback(() => setReader(null), []);
 
@@ -91,9 +112,27 @@ export default function App() {
     else closeReader();
   }, [closeReader]);
 
-  const toggleFavorite = useCallback((id: string) => {
-    setFavorites(new Set(prefs.toggleFavorite(id)));
-  }, []);
+  const toggleFavorite = useCallback(async (id: string) => {
+    if (favoriteBusy.current.has(id)) return;
+    favoriteBusy.current.add(id);
+    setFavoriteMessage(null);
+    try {
+      if (prefs.getFavorites().has(id)) {
+        const next = prefs.toggleFavorite(id);
+        setFavorites(new Set(next));
+        setSavedItems((items) => items.filter((i) => i.id !== id));
+        await removeArticle(id);
+      } else {
+        const item = news.byId.get(id) ?? savedItems.find((i) => i.id === id);
+        if (!item) throw new Error('找不到文章信息');
+        await saveArticle(item);
+        setFavorites(new Set(prefs.toggleFavorite(id)));
+        setSavedItems((items) => [...items.filter((i) => i.id !== id), item]);
+      }
+    } catch (err) {
+      setFavoriteMessage(`收藏操作未完成：${err instanceof Error ? err.message : String(err)}`);
+    } finally { favoriteBusy.current.delete(id); }
+  }, [news.byId, savedItems]);
 
   const today = new Date();
   const dateLabel = `${today.getFullYear()} 年 ${today.getMonth() + 1} 月 ${today.getDate()} 日`;
@@ -110,7 +149,7 @@ export default function App() {
             <div className="flex items-center gap-1">
               {news.fromCache && (
                 <span className="chip mr-1 bg-paper-soft text-ink-faint dark:bg-[#232119]">
-                  离线
+                  缓存
                 </span>
               )}
               <button
@@ -154,6 +193,10 @@ export default function App() {
         </div>
       </header>
 
+      {tab !== 'settings' && news.error && <p role="status" className="px-4 py-2 text-xs text-accent">{news.error}</p>}
+      {favoriteMessage && <p role="alert" className="fixed inset-x-4 bottom-20 z-50 rounded-xl bg-paper p-3 text-sm text-accent shadow-pop">{favoriteMessage}<button className="ml-3" onClick={() => setFavoriteMessage(null)}>关闭</button></p>}
+      {tab === 'saved' && archiveReady && unavailableFavorites > 0 && <p role="status" className="px-4 py-2 text-xs text-ink-muted">{unavailableFavorites} 篇旧收藏尚未找到正文，可能已超过服务器保留期；收藏记录仍保留。</p>}
+
       <main className="min-h-0 flex-1">
         {tab === 'settings' ? (
           <div className="h-full overflow-y-auto">
@@ -171,9 +214,9 @@ export default function App() {
               }}
             />
           </div>
-        ) : news.loading && !news.items.length ? (
+        ) : (tab === 'feed' ? news.loading && !news.items.length : !archiveReady && !visibleItems.length) ? (
           <FeedSkeleton />
-        ) : news.error && !news.items.length ? (
+        ) : tab === 'feed' && news.error && !news.items.length ? (
           <EmptyState
             title="加载失败"
             desc={news.error}

@@ -53,7 +53,7 @@ async function putSafe(cache, request, res, cacheName, maxEntries) {
   }
 }
 
-async function staleWhileRevalidate(request, cacheName, maxEntries) {
+async function staleWhileRevalidate(event, request, cacheName, maxEntries) {
   const cache = await caches.open(cacheName);
   const cached = await cache.match(request);
   const network = fetch(request)
@@ -65,6 +65,7 @@ async function staleWhileRevalidate(request, cacheName, maxEntries) {
     // respondWith(undefined) 会让页面侧的 fetch 直接 reject，
     // 阅读页于是把它当成"这个源抓不到正文"，谎报成付费墙 —— 其实内容一直在。
     .catch(() => cached ?? new Response('offline', { status: 503, statusText: 'offline' }));
+  event.waitUntil(network.then(() => {}));
   return cached || network;
 }
 
@@ -75,8 +76,7 @@ async function cacheFirst(request, cacheName, maxEntries) {
   try {
     const res = await fetch(request);
     if (res && (res.ok || res.type === 'opaque')) {
-      await cache.put(request, res.clone());
-      if (maxEntries) trimCache(cacheName, maxEntries);
+      await putSafe(cache, request, res, cacheName, maxEntries);
     }
     return res;
   } catch {
@@ -89,7 +89,7 @@ async function networkFirst(event, request, cacheName, fallbackUrl) {
   try {
     const preload = event.preloadResponse ? await event.preloadResponse : null;
     const res = preload || (await fetch(request));
-    if (res && res.ok) cache.put(request, res.clone());
+    if (res && res.ok) await putSafe(cache, request, res, cacheName, cacheName === DATA ? DATA_MAX_ENTRIES : undefined);
     return res;
   } catch {
     const cached = await cache.match(request);
@@ -106,13 +106,24 @@ self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return; // AI 的 POST 不缓存
   const url = new URL(req.url);
+  // 任务状态、权限响应、配置不能被旧 SW 缓存遮住。
+  if (url.pathname.startsWith('/api/')) return;
 
   // 数据与图片（跨源到 Worker，pathname 同样以 /data/ 开头）
   if (url.pathname.startsWith('/data/')) {
     if (url.pathname.startsWith('/data/img/')) {
       event.respondWith(cacheFirst(req, IMG, IMG_MAX_ENTRIES));
+    } else if (req.cache === 'no-cache' || req.cache === 'reload') {
+      // 手动刷新必须拿新数据；失败交给页面保留完整旧快照。
+      event.respondWith(fetch(req).then(async (res) => {
+        if (res.ok) {
+          try { await putSafe(await caches.open(DATA), req, res, DATA, DATA_MAX_ENTRIES); }
+          catch (err) { console.warn('[sw] cache unavailable', err); }
+        }
+        return res;
+      }));
     } else {
-      event.respondWith(staleWhileRevalidate(req, DATA, DATA_MAX_ENTRIES));
+      event.respondWith(staleWhileRevalidate(event, req, DATA, DATA_MAX_ENTRIES));
     }
     return;
   }
@@ -126,7 +137,7 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(cacheFirst(req, RUNTIME));
     return;
   }
-  event.respondWith(staleWhileRevalidate(req, RUNTIME));
+  event.respondWith(staleWhileRevalidate(event, req, RUNTIME));
 });
 
 self.addEventListener('message', (event) => {

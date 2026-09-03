@@ -47,7 +47,7 @@ class TranslationSession {
     try { await set(this.key, { ...this.state, running: false }); }
     catch (err) {
       console.warn('[translation] local write failed', err);
-      this.emit({ warning: '本机未能保存译文，云端任务仍会继续' });
+      this.emit({ warning: this.state.jobId ? '本机未能保存译文，云端任务仍会继续' : '本机未能保存任务，请保持页面打开直到上传成功' });
     }
   }
   async accept(job: TranslationJob) {

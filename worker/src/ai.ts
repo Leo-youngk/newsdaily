@@ -1,5 +1,5 @@
 // Provider 抽象：OpenAI 兼容端点 + Cloudflare Workers AI + Google 免费翻译三级容灾
-// 保证当外部 API 欠费、挂掉或超时时，100% 能够降级翻译成中文并明确在日志/UI 告警
+// 各通道都有可能失败；正文任务会保留进度并继续补译。
 
 import {
   TRANSLATE_SYSTEM,
@@ -14,7 +14,7 @@ export interface ChatMessage {
 }
 
 export interface AiEnv {
-  AI?: any; // Cloudflare Workers AI binding
+  AI?: Ai;
   AI_BASE_URL?: string;
   AI_API_KEY?: string;
   AI_MODEL?: string;
@@ -65,8 +65,10 @@ export async function callModel(
       throw new Error(`AI ${model} HTTP ${res.status}: ${t.slice(0, 200)}`);
     }
     const json = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
+      choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
     };
+    const finish = json.choices?.[0]?.finish_reason;
+    if (finish && finish !== 'stop') throw new Error(`AI ${model} 输出未完整结束：${finish}`);
     const text = json.choices?.[0]?.message?.content?.trim();
     if (!text) throw new Error(`AI ${model} 返回空内容`);
     return text;
@@ -89,7 +91,7 @@ export async function callWorkersAi(
     const res = (await env.AI.run('@cf/qwen/qwen1.5-7b-chat', {
       messages,
       max_tokens: 2048,
-    })) as { response?: string };
+    }, { signal: ctrl.signal })) as { response?: string };
     const text = res?.response?.trim();
     if (!text) throw new Error('Workers AI @cf/qwen/qwen1.5-7b-chat 返回空内容');
     return text;
@@ -112,26 +114,16 @@ export async function callWorkersAiTranslate(
       text,
       source_lang: 'en',
       target_lang: 'zh',
-    })) as { translated_text?: string };
+    }, { signal: ctrl.signal })) as { translated_text?: string };
     const out = res?.translated_text?.trim();
     if (!out) throw new Error('Workers AI @cf/meta/m2m100-1.2b 返回空内容');
     return out;
-  } catch (err) {
-    // 若专用翻译模型不可用，尝试 Qwen 对话模型翻译
-    return callWorkersAi(
-      env,
-      [
-        { role: 'system', content: TRANSLATE_SYSTEM },
-        { role: 'user', content: buildTranslateUserPrompt(text) },
-      ],
-      timeoutMs,
-    );
   } finally {
     clearTimeout(timer);
   }
 }
 
-/** Level 3: Google 网页公共翻译通道（免 API Key、零配额限制、毫秒级响应） */
+/** Google 网页公共通道：尽力尝试；可限流或失效，不能替代持久化重试。 */
 export async function callGoogleTranslate(text: string, timeoutMs = 10000): Promise<string> {
   const trimmed = text.trim();
   if (!trimmed) return '';
@@ -198,7 +190,7 @@ export async function translateContent(
     }
   }
 
-  // 2. 尝试 Cloudflare Workers AI（内网零配额/每日 10k 免费神经元）
+  // 2. 尝试 Cloudflare Workers AI 独立通道
   if (env.AI) {
     try {
       console.info('[translation] attempting Cloudflare Workers AI fallback');
@@ -214,7 +206,7 @@ export async function translateContent(
     }
   }
 
-  // 3. 终极绝对保底：Google 免费翻译通道
+  // 3. 尝试 Google 翻译通道
   try {
     console.info('[translation] attempting Google Translate engine fallback');
     const googleResult = await callGoogleTranslate(text);

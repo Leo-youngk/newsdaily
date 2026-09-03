@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { chat, translateContent, type AiEnv, type ChatMessage } from './ai.js';
-import { translateParagraphBatch, type ParagraphInput } from './translations.js';
+import type { ParagraphInput } from './translations.js';
 import {
   createTranslationJob,
   getTranslationJob,
@@ -10,9 +10,7 @@ import {
 } from './translation-jobs.js';
 import {
   SUMMARY_SYSTEM,
-  TRANSLATE_SYSTEM,
   buildSummaryUserPrompt,
-  buildTranslateUserPrompt,
 } from './prompts.js';
 
 export interface Env extends AiEnv {
@@ -233,101 +231,6 @@ app.post('/api/ai/translate', async (c) => {
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : String(err) }, 502);
   }
-});
-
-/**
- * GET /api/ai/bilingual?id=xxx
- * 读取整篇双语持久化缓存
- */
-app.get('/api/ai/bilingual', async (c) => {
-  const id = c.req.query('id');
-  if (!id) return c.json({ error: '缺少 id' }, 400);
-  const obj = await c.env.NEWS_R2.get(`bilingual/${id}.json`);
-  if (!obj) return c.json({ cached: false });
-  try {
-    const data = (await obj.json()) as { translations?: string[] };
-    if (Array.isArray(data?.translations)) {
-      return c.json({ cached: true, translations: data.translations });
-    }
-  } catch {
-    // ignore
-  }
-  return c.json({ cached: false });
-});
-
-/**
- * POST /api/ai/bilingual  { id, translations }
- * 存储整篇双语对照结果到 R2
- */
-app.post('/api/ai/bilingual', async (c) => {
-  const auth = requireToken(c);
-  if (!auth.ok) return c.json({ error: auth.error }, auth.status);
-  const { id, translations } = await c.req
-    .json<{ id: string; translations: string[] }>()
-    .catch(() => ({ id: '', translations: [] }));
-  if (!id || !Array.isArray(translations)) {
-    return c.json({ error: '缺少 id 或 translations 参数' }, 400);
-  }
-  await c.env.NEWS_R2.put(
-    `bilingual/${id}.json`,
-    JSON.stringify({ translations, updatedAt: Date.now() }),
-    { httpMetadata: { contentType: 'application/json; charset=utf-8' } },
-  );
-  return c.json({ ok: true });
-});
-
-/**
- * POST /api/ai/translate-batch
- * 支持前端实时分批翻译（兼容 string[] 段落与 ParagraphInput[] 两种协议）
- */
-app.post('/api/ai/translate-batch', async (c) => {
-  const auth = requireToken(c);
-  if (!auth.ok) return c.json({ error: auth.error }, auth.status);
-  const payload = (await c.req.json().catch(() => null)) as any;
-  if (!payload || !payload.paragraphs) {
-    return c.json({ error: '无效请求格式' }, 400);
-  }
-
-  // 1. 兼容前端批量格式：{ id?: string, paragraphs: string[] }
-  if (
-    Array.isArray(payload.paragraphs) &&
-    (payload.paragraphs.length === 0 || typeof payload.paragraphs[0] === 'string')
-  ) {
-    const rawList = payload.paragraphs as string[];
-    if (!rawList.length) return c.json({ ok: true, translations: [] });
-    if (rawList.length > 50) return c.json({ error: '单批段落过多（最多50段）' }, 400);
-
-    const inputs: ParagraphInput[] = rawList.map((text, idx) => ({
-      key: String(idx),
-      text,
-    }));
-    const batchResult = await translateParagraphBatch(c.env, inputs);
-    const translations = batchResult.results.map((r) => r.text || '');
-    return c.json({
-      ok: true,
-      translations,
-      warnings: batchResult.warnings,
-      models: [...new Set(batchResult.results.map((r) => r.model).filter(Boolean))],
-    });
-  }
-
-  // 2. 兼容结构化格式：{ paragraphs: ParagraphInput[] }
-  const paragraphs = payload.paragraphs as ParagraphInput[];
-  if (
-    !Array.isArray(paragraphs) ||
-    !paragraphs.length ||
-    paragraphs.length > 100 ||
-    paragraphs.some(
-      (p) =>
-        !p ||
-        typeof p.key !== 'string' ||
-        typeof p.text !== 'string' ||
-        !p.text.trim(),
-    )
-  ) {
-    return c.json({ error: '段落格式或长度无效' }, 400);
-  }
-  return c.json(await translateParagraphBatch(c.env, paragraphs));
 });
 
 /** 长文翻译任务化队列接口 */

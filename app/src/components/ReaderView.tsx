@@ -385,7 +385,6 @@ function AiBlock({ label, state }: { label: string; state: ReturnType<typeof use
     <div className="mt-4 rounded-2xl border border-accent/20 bg-accent-wash/60 p-4 dark:border-accent/25 dark:bg-[#241d16]">
       <div className="mb-1.5 flex items-center gap-2 text-[0.7rem] font-semibold uppercase tracking-wide text-accent">
         {label}
-        {state.result.fallback && <span>已切换备用模型</span>}
         {state.result.cached && <span className="chip bg-white/60 text-ink-faint dark:bg-black/20">缓存</span>}
         {state.result.model && <span className="chip bg-white/60 text-ink-faint dark:bg-black/20">{state.result.model}</span>}
         {state.result.fallback && <span className="chip bg-amber-500/20 text-amber-700 dark:text-amber-300">备用通道</span>}
