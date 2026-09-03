@@ -96,7 +96,7 @@ async function main() {
   console.log(`   - 标题: ${detail.title}`);
   console.log(`   - 来源: ${detail.sourceName}`);
   console.log(`   - 正文字符数: ${detail.contentText.length}`);
-  console.log(`   - 含有核心公理模块: ${detail.contentHtml.includes('核心公理与心智模型') ? '是 ✅' : '否 ❌'}`);
+  console.log(`   - 含有核心公理模块: ${detail.contentHtml.includes('核心公理') ? '是 ✅' : '否 ❌'}`);
   console.log(`   - 含有中英双语对齐块: ${detail.contentHtml.includes('bilingual-block') ? '是 ✅' : '否 ❌'}`);
   console.log(`   - 含有英文章节段落: ${detail.contentHtml.includes('en-text') ? '是 ✅' : '否 ❌'}`);
   console.log(`   - 含有中文章节段落: ${detail.contentHtml.includes('zh-text') ? '是 ✅' : '否 ❌'}`);
