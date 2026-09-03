@@ -12,9 +12,20 @@ export function resolveImage(image?: string): string | undefined {
 }
 
 async function getJson<T>(path: string, cache: RequestCache = 'default'): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, { cache });
-  if (!res.ok) throw new Error(`${path} → HTTP ${res.status}`);
-  return (await res.json()) as T;
+  // 重试一次：用户多半在代理后面访问 workers.dev，网络抖一下就前功尽弃。
+  // 一次性失败会让阅读页直接显示"正文取不到"，而内容其实一直在服务器上。
+  let lastErr: unknown;
+  for (let i = 0; i < 2; i++) {
+    try {
+      const res = await fetch(`${API_BASE}${path}`, { cache });
+      if (!res.ok) throw new Error(`${path} → HTTP ${res.status}`);
+      return (await res.json()) as T;
+    } catch (e) {
+      lastErr = e;
+      if (i === 0) await new Promise((r) => setTimeout(r, 400));
+    }
+  }
+  throw lastErr;
 }
 
 export const dataApi = {

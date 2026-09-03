@@ -36,6 +36,9 @@ const SCALE_CLASS: Record<FontScale, string> = {
 
 export default function ReaderView({ item, onClose, favorite, onToggleFavorite }: Props) {
   const [detail, setDetail] = useState<ItemDetail | null>(null);
+  // 「这个源本来就没正文」和「这次没拿到」是两回事，不能共用一段文案
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const [loadingDetail, setLoadingDetail] = useState(item.contentLen > 0);
   const [scale, setScale] = useState<FontScale>(() => prefs.getFontScale());
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -62,16 +65,25 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
     let alive = true;
     if (item.contentLen > 0) {
       setLoadingDetail(true);
+      setLoadFailed(false);
       dataApi
         .detail(item.id)
-        .then((d) => alive && setDetail(d))
-        .catch(() => alive && setDetail(null))
+        .then((d) => {
+          if (!alive) return;
+          setDetail(d);
+          restoredRef.current = false; // 重试成功后要重新恢复阅读位置
+        })
+        .catch(() => {
+          if (!alive) return;
+          setDetail(null);
+          setLoadFailed(true);
+        })
         .finally(() => alive && setLoadingDetail(false));
     }
     return () => {
       alive = false;
     };
-  }, [item.id, item.contentLen]);
+  }, [item.id, item.contentLen, reloadKey]);
 
   // 阅读进度：27% 的内容超过 20 分钟，Lex Fridman 平均一篇 166 分钟，
   // 不记位置的话每次退出再进都要从头翻。
@@ -251,10 +263,17 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
             !loadingDetail && (
               <div className="rounded-2xl border hairline bg-paper-soft p-5 dark:bg-[#1b1a16]">
                 <p className="mb-3 text-xs leading-relaxed text-ink-faint">
-                  {pending
-                    ? '这集还在转写队列里（中文播客没有现成文字稿，由 whisper 自动转写，通常几小时内完成）。可以先听音频。'
-                    : '这条的正文暂时取不到（付费墙、动态渲染或反爬）。以下是摘要。'}
+                  {loadFailed
+                    ? '正文没加载出来（网络问题）。内容在服务器上，重试一下就行。'
+                    : pending
+                      ? '这集还在转写队列里（中文播客没有现成文字稿，由 whisper 自动转写，通常几小时内完成）。可以先听音频。'
+                      : '这条的正文暂时取不到（付费墙、动态渲染或反爬）。以下是摘要。'}
                 </p>
+                {loadFailed && (
+                  <button className="btn-primary mb-4" onClick={() => setReloadKey((k) => k + 1)}>
+                    重新加载
+                  </button>
+                )}
                 {item.summary ? (
                   <p className="font-serif text-[1.02rem] leading-[1.85] text-ink-soft dark:text-[#d8d2c8]">
                     {item.summary}

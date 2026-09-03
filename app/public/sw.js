@@ -7,8 +7,11 @@ const DATA = `data-${VERSION}`;
 const IMG = `img-${VERSION}`;
 
 const SHELL_ASSETS = ['/', '/index.html', '/manifest.json'];
-// iOS PWA 存储配额很紧，图片缓存必须有上限，否则整个站点数据会被系统一次性清掉
+// iOS PWA 存储配额很紧，缓存必须有上限，否则整个站点数据会被系统一次性清掉。
+// 正文同样要限：单篇 Lex Fridman 逐字稿就有 332KB，一天 176 条合计 7.1MB，
+// 只给图片设上限、正文不限，撑爆配额只是时间问题。
 const IMG_MAX_ENTRIES = 300;
+const DATA_MAX_ENTRIES = 150;
 
 self.addEventListener('install', (event) => {
   // 不再无条件 skipWaiting：新 SW 抢在旧页面还开着时接管，会导致 chunk 版本错配。
@@ -39,15 +42,29 @@ async function trimCache(cacheName, maxEntries) {
   await Promise.all(keys.slice(0, keys.length - maxEntries).map((k) => cache.delete(k)));
 }
 
-async function staleWhileRevalidate(request, cacheName) {
+/** 写缓存失败（iOS 配额满是常事）不能连累这次请求本身 */
+async function putSafe(cache, request, res, cacheName, maxEntries) {
+  try {
+    await cache.put(request, res.clone());
+    if (maxEntries) await trimCache(cacheName, maxEntries);
+  } catch (e) {
+    // 存不下就不存，内容照样返回。静默失败会让人误以为是抓取问题
+    console.warn('[sw] 缓存写入失败，本次直接用网络响应', e);
+  }
+}
+
+async function staleWhileRevalidate(request, cacheName, maxEntries) {
   const cache = await caches.open(cacheName);
   const cached = await cache.match(request);
   const network = fetch(request)
-    .then((res) => {
-      if (res && res.ok) cache.put(request, res.clone());
+    .then(async (res) => {
+      if (res && res.ok) await putSafe(cache, request, res, cacheName, maxEntries);
       return res;
     })
-    .catch(() => cached);
+    // 没有缓存又拿不到网络时，这里以前返回 undefined，
+    // respondWith(undefined) 会让页面侧的 fetch 直接 reject，
+    // 阅读页于是把它当成"这个源抓不到正文"，谎报成付费墙 —— 其实内容一直在。
+    .catch(() => cached ?? new Response('offline', { status: 503, statusText: 'offline' }));
   return cached || network;
 }
 
@@ -95,7 +112,7 @@ self.addEventListener('fetch', (event) => {
     if (url.pathname.startsWith('/data/img/')) {
       event.respondWith(cacheFirst(req, IMG, IMG_MAX_ENTRIES));
     } else {
-      event.respondWith(staleWhileRevalidate(req, DATA));
+      event.respondWith(staleWhileRevalidate(req, DATA, DATA_MAX_ENTRIES));
     }
     return;
   }
