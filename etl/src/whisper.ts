@@ -163,18 +163,22 @@ const ANY_PUNCT = /[，。？！：；、,.?!;:]/g;
 const AFTER_FULL_PUNCT = /([，。？！：；、]) +/g;
 
 /**
- * 这份稿子到底有没有标点。
+ * 这份稿子的断句结构是标点还是空格。
  *
  * whisper 转中文**对话**时经常一个标点都不给（实测跟模型、供应商、
  * 切片长度都无关，是内容决定的：念稿的开场白有标点，一进访谈就没了），
  * 转而用空格标出短语边界 —— whisper-1 实测每 12 个字一个空格。
  * 这种时候空格是全篇唯一的结构。
  *
- * 阈值取每 100 字一个标点：有标点的段落实测密度是每 16 字一个，
- * 差着一个数量级，不会误判。
+ * 判据是两者谁多，不设绝对阈值：整集常常是混的（开场白有标点、
+ * 正片没有），按密度定阈值会卡在边界上判错 —— 硅谷101 E248 就是
+ * 每 91 字一个标点，勉强过了「每 100 字」的线，于是空格被删光、
+ * 段落撑到 443 字，又变回一堵墙。谁多就以谁为准，不用挑数。
  */
-function isPunctuated(text: string): boolean {
-  return text.length > 0 && (text.match(ANY_PUNCT) ?? []).length / text.length > 0.01;
+function structureIsPunct(text: string): boolean {
+  const punct = (text.match(ANY_PUNCT) ?? []).length;
+  const spaces = (text.match(SPACE_BETWEEN_CJK) ?? []).length;
+  return punct >= spaces;
 }
 
 /**
@@ -190,7 +194,7 @@ function isPunctuated(text: string): boolean {
  * 买的就是这个：turbo 和 large-v3 既没标点也没空格，是真的一堵墙）。
  */
 export function normalizeZhTranscript(t: Transcription): Transcription {
-  const punctuated = isPunctuated(t.text);
+  const punctuated = structureIsPunct(t.text);
   const fix = (s: string) => {
     const out = s
       .replace(HALF_AFTER_CJK, (_m, c: string, p: string) => c + FULL[p])
@@ -220,7 +224,7 @@ export function segmentsToHtml(t: Transcription, lang: 'zh' | 'en'): string {
   }
   // 没有标点的稿子断不出句子，只能按长度硬断。段落必须短得多，
   // 否则就是一屏 460 字的墙；顺带让时间戳更密，点哪句跳哪句
-  const punctuated = isPunctuated(t.text);
+  const punctuated = structureIsPunct(t.text);
   const maxChars = lang === 'en' ? 600 : punctuated ? 260 : 120;
   // whisper 的每个 segment 本身就是一个短语（中文对话实测每 5 分钟 154 段，
   // 平均十来个字）。没有标点时这些边界是全篇唯一的断句依据，
@@ -253,7 +257,9 @@ export function segmentsToHtml(t: Transcription, lang: 'zh' | 'en'): string {
     // 有标点时攒够长度且落在句末才断，避免把一句话切两半；
     // 没标点时句末判据永远不成立，直接按长度断，否则会一路撑到硬顶
     if (len >= maxChars && (!punctuated || /[。！？.!?…」』"']$/.test(s.text))) flush();
-    else if (len >= maxChars * 1.8) flush();
+    // 句子本来就长（中文口语一句上百字很常见）时的硬顶。
+    // 原来是 1.8 倍，实测能撑出 443 字的段落，一屏读不完
+    else if (len >= maxChars * 1.3) flush();
   }
   flush();
   return out.join('');
