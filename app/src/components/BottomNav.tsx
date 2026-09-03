@@ -1,4 +1,4 @@
-export type Tab = 'feed' | 'saved' | 'settings';
+export type Tab = 'feed' | 'directory' | 'saved' | 'settings';
 
 interface Props {
   tab: Tab;
@@ -13,6 +13,15 @@ const TABS: { id: Tab; label: string; icon: (active: boolean) => React.ReactNode
     icon: (a) => (
       <svg viewBox="0 0 24 24" className="h-[22px] w-[22px]" fill="none" stroke="currentColor" strokeWidth={a ? 2 : 1.6} strokeLinecap="round" strokeLinejoin="round">
         <path d="M4 5h16M4 10h16M4 15h10M4 20h7" />
+      </svg>
+    ),
+  },
+  {
+    id: 'directory',
+    label: '目录',
+    icon: (a) => (
+      <svg viewBox="0 0 24 24" className="h-[22px] w-[22px]" fill="none" stroke="currentColor" strokeWidth={a ? 2 : 1.6} strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 5h7l2 2h9v13H3z" /><path d="M7 11h10M7 15h7" />
       </svg>
     ),
   },

@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { chat, translateContent, type AiEnv, type ChatMessage } from './ai.js';
 import type { ParagraphInput } from './translations.js';
+import { getTitleTranslations, runTitleTranslations } from './title-translations.js';
 import {
   createTranslationJob,
   getTranslationJob,
@@ -31,7 +32,7 @@ const app = new Hono<{ Bindings: Env }>();
 app.use('/*', async (c, next) => {
   const path = c.req.path;
   const isPublicRead =
-    c.req.method === 'GET' && (path.startsWith('/data/') || path === '/api/health');
+    c.req.method === 'GET' && (path.startsWith('/data/') || path === '/api/health' || path === '/api/titles');
 
   if (isPublicRead) {
     return cors({ origin: '*', allowMethods: ['GET', 'OPTIONS'], maxAge: 86400 })(c, next);
@@ -64,6 +65,14 @@ function contentTypeFor(key: string): string {
 
 app.get('/', (c) => c.json({ ok: true, service: 'news-pwa-worker' }));
 app.get('/api/health', (c) => c.json({ ok: true, ts: Date.now() }));
+app.get('/api/titles', async (c) => {
+  c.header('Cache-Control', 'no-store');
+  try { return c.json(await getTitleTranslations(c.env)); }
+  catch (error) {
+    console.error('[title-api]', { error: String(error) });
+    return c.json({ error: '标题译文暂时无法读取，请稍后重试' }, 503);
+  }
+});
 
 /**
  * GET /data/* —— 从 R2 读取并透传。
@@ -302,5 +311,9 @@ export default {
   fetch: app.fetch,
   scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(runDueTranslationJobs(env));
+    ctx.waitUntil(runTitleTranslations(env).catch((error) => {
+      console.error('[title-cron]', { error: String(error) });
+      throw error;
+    }));
   },
 };

@@ -7,6 +7,7 @@ import { CATEGORIES, type Category, type Item } from './types';
 import CategoryTabs from './components/CategoryTabs';
 import SearchBar from './components/SearchBar';
 import FeedList from './components/FeedList';
+import DirectoryView from './components/DirectoryView';
 import ReaderView from './components/ReaderView';
 import SettingsView from './components/settings/SettingsView';
 import BottomNav, { type Tab } from './components/BottomNav';
@@ -71,7 +72,7 @@ export default function App() {
 
   const visibleItems = useMemo(() => {
     let list = tab === 'saved'
-      ? [...new Map([...savedItems, ...news.items.filter((i) => favorites.has(i.id))].map((i) => [i.id, i])).values()]
+      ? news.enrich([...new Map([...savedItems, ...news.items.filter((i) => favorites.has(i.id))].map((i) => [i.id, i])).values()])
       : news.items;
     if (tab === 'feed' && category !== ALL) list = list.filter((i) => i.category === category);
     list = searchFilter(list, query);
@@ -82,7 +83,7 @@ export default function App() {
       );
     }
     return list;
-  }, [news.items, savedItems, tab, category, query, favorites, sort]);
+  }, [news.items, news.enrich, savedItems, tab, category, query, favorites, sort]);
   const unavailableFavorites = [...favorites].filter((id) => !savedItems.some((i) => i.id === id) && !news.byId.has(id)).length;
 
   const closeReader = useCallback(() => setReader(null), []);
@@ -176,7 +177,7 @@ export default function App() {
           {tab !== 'settings' && (
             <>
               <div className="pb-2.5">
-                <SearchBar value={query} onChange={setQuery} />
+                <SearchBar value={query} onChange={setQuery} placeholder={tab === 'directory' ? '搜索节目、作者或标题…' : '搜索中英文标题…'} />
               </div>
               {tab === 'feed' && (
                 <div className="-mx-1 border-t hairline pt-0.5">
@@ -193,6 +194,7 @@ export default function App() {
         </div>
       </header>
 
+      {tab !== 'settings' && news.titleStatus && <p role="status" className="px-4 py-2 text-xs text-ink-muted">{news.titleStatus}</p>}
       {tab !== 'settings' && news.error && <p role="status" className="px-4 py-2 text-xs text-accent">{news.error}</p>}
       {favoriteMessage && <p role="alert" className="fixed inset-x-4 bottom-20 z-50 rounded-xl bg-paper p-3 text-sm text-accent shadow-pop">{favoriteMessage}<button className="ml-3" onClick={() => setFavoriteMessage(null)}>关闭</button></p>}
       {tab === 'saved' && archiveReady && unavailableFavorites > 0 && <p role="status" className="px-4 py-2 text-xs text-ink-muted">{unavailableFavorites} 篇旧收藏尚未找到正文，可能已超过服务器保留期；收藏记录仍保留。</p>}
@@ -214,6 +216,8 @@ export default function App() {
               }}
             />
           </div>
+        ) : tab === 'directory' ? (
+          news.loading && !news.items.length ? <FeedSkeleton /> : <DirectoryView items={news.items} query={query} readSet={readSet} progress={progress} favorites={favorites} density={density} onOpen={openReader} onToggleFavorite={toggleFavorite} />
         ) : (tab === 'feed' ? news.loading && !news.items.length : !archiveReady && !visibleItems.length) ? (
           <FeedSkeleton />
         ) : tab === 'feed' && news.error && !news.items.length ? (

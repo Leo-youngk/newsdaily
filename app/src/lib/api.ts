@@ -3,6 +3,12 @@
 export const API_BASE: string =
   (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/+$/, '') ||
   'https://news-pwa-worker.if5v.workers.dev';
+export interface TitleIndex {
+  translations: Record<string, { original: string; text: string }>;
+  pending: number;
+  total: number;
+  warning?: string;
+}
 let configEtag: string | null = null;
 
 /** 把 Item.image（形如 /data/img/x.webp）解析为绝对 URL */
@@ -40,6 +46,15 @@ export const dataApi = {
   detail: (id: string) =>
     getJson<import('../types').ItemDetail>(`/data/detail/${id}.json`),
   config: () => getJson<import('../types').AppConfig>('/api/config', 'no-store'),
+  titles: () => getJson<TitleIndex>('/api/titles', 'no-store'),
+  authors: async (): Promise<Record<string, string>> => {
+    const res = await fetch(`${API_BASE}/data/catalog/authors.json`, { cache: 'no-cache', signal: AbortSignal.timeout(15000) });
+    if (res.status === 404) return {};
+    if (!res.ok) throw new Error(`作者目录暂不可用（HTTP ${res.status}）`);
+    const value = await res.json() as { authors?: Record<string, string> };
+    if (!value.authors || typeof value.authors !== 'object') throw new Error('作者目录格式错误');
+    return value.authors;
+  },
 };
 
 export async function putConfig(

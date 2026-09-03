@@ -1,4 +1,5 @@
 import Parser from 'rss-parser';
+import { cleanAuthor } from './authors.js';
 import { fetchText } from './fetch.js';
 import { config } from './config.js';
 import { decodeEntities, parseDate, parseDuration } from './util.js';
@@ -10,6 +11,7 @@ export interface TranscriptRef {
 
 export interface RawEntry {
   title: string;
+  author?: string;
   link: string;
   guid: string;
   publishedAt: number;
@@ -112,6 +114,11 @@ export async function parseFeed(url: string): Promise<RawEntry[]> {
     timeout: config.sourceTimeout,
     retries: config.retries,
   });
+  return parseFeedXml(xml);
+}
+
+/** 与网络分离，RSS/Atom 署名解析可独立验证。 */
+export async function parseFeedXml(xml: string): Promise<RawEntry[]> {
   const feed = await parser.parseString(xml);
   const out: RawEntry[] = [];
   for (const entry of feed.items ?? []) {
@@ -122,6 +129,7 @@ export async function parseFeed(url: string): Promise<RawEntry[]> {
     if (!link) continue;
     out.push({
       title,
+      author: cleanAuthor(any.creator) ?? cleanAuthor(any.author),
       link,
       guid: String(any.guid ?? any.id ?? link),
       publishedAt: parseDate(any.isoDate ?? any.pubDate ?? any.date ?? feed.lastBuildDate),

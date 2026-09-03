@@ -76,6 +76,8 @@ export interface Item {
   lang: Lang;
   title: string;
   titleZh?: string;
+  /** RSS 提供的真实署名；缺失时不推测。 */
+  author?: string;
   summary?: string;
   url: string;
   image?: string; // 可选，图片不是必需品

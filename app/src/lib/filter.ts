@@ -68,6 +68,8 @@ export function searchFilter(items: Item[], query: string): Item[] {
   return items.filter(
     (it) =>
       it.title.toLowerCase().includes(q) ||
+      (it.titleZh ?? '').toLowerCase().includes(q) ||
+      (it.author ?? '').toLowerCase().includes(q) ||
       (it.summary ?? '').toLowerCase().includes(q) ||
       it.sourceName.toLowerCase().includes(q),
   );

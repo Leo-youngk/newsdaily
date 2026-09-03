@@ -5,7 +5,6 @@ import { createReaderDocument, translatedHtml, type ReaderDocument } from '../li
 import { useTranslation } from '../lib/translation-session';
 import {
   summarize,
-  translateTitle,
   type AiResult,
 } from '../lib/ai';
 import { fullDate, categoryColor, readingLabel } from '../lib/format';
@@ -54,7 +53,6 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
   const latestProgress = useRef(0);
   const [progress, setProgress] = useState(0);
   const summary = useAi();
-  const titleTr = useAi();
 
   const [bilingualMode, setBilingualMode] = useState<'original' | 'bilingual' | 'zh'>('original');
   const [readerDocument, setReaderDocument] = useState<ReaderDocument | null>(null);
@@ -235,6 +233,8 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
         <h1 className="title-serif text-[1.75rem] font-bold leading-tight">
           {item.titleZh || item.title}
         </h1>
+        {item.titleZh && item.titleZh !== item.title && <p lang="en" className="mt-3 break-words text-sm leading-relaxed text-ink-muted">{item.title}</p>}
+        {item.author && <p className="mt-2 text-xs text-ink-faint">作者 · {item.author}</p>}
 
         {/* 播客：正文是逐字稿，但音频也该能边听边读 */}
         {item.audioUrl && (
@@ -251,11 +251,6 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
           <button className="btn-outline" onClick={() => summary.run(() => summarize(item.id))} disabled={!item.contentLen || summary.status === 'loading'}>
             <Dot status={summary.status} /> 生成摘要
           </button>
-          {item.lang === 'en' && (
-            <button className="btn-outline" disabled={titleTr.status === 'loading'} onClick={() => titleTr.run(() => translateTitle(item.id, item.title))}>
-              <Dot status={titleTr.status} /> 翻译标题
-            </button>
-          )}
 
           {/* 核心功能：双语对照/仅中文/原文三档切换 */}
           {item.lang === 'en' && item.contentLen > 0 && (
@@ -305,7 +300,6 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
         </div>
 
         <AiBlock label="AI 摘要" state={summary} />
-        <AiBlock label="标题译文" state={titleTr} />
 
         <div className="mt-6">
           {loadingDetail && (

@@ -1,5 +1,7 @@
 import './proxy.js'; // 必须最先导入：设置全局 fetch 代理
 import pLimit from 'p-limit';
+import { mergeAuthors, type AuthorIndex } from './authors.js';
+import { retainedDates } from './retention.js';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -219,6 +221,7 @@ async function buildItem(s: SourceConfig, entry: RawEntry): Promise<Built | null
     category: s.category,
     lang: s.lang,
     title: entry.title,
+    author: entry.author,
     summary: summaryText || undefined,
     url,
     publishedAt: entry.publishedAt,
@@ -464,6 +467,17 @@ async function main(): Promise<void> {
   const allBuilt: Built[] = [];
   for (const r of results) if (r.ok) allBuilt.push(...r.built);
 
+  // 所有抓到的署名都更新，包括已去重的历史条目；单独存储避免覆盖转写产物。
+  try {
+    const previous = await store.getJson<AuthorIndex>('catalog/authors.json');
+    const authors = mergeAuthors(previous, allBuilt.map((b) => b.item));
+    if (JSON.stringify(authors.authors) !== JSON.stringify(previous?.authors ?? {})) {
+      await store.putJson('catalog/authors.json', authors);
+    }
+  } catch (err) {
+    console.warn('[authors] 署名索引更新失败，本轮内容仍继续采集', err);
+  }
+
   const uniqueItems = deduper.dedupe(allBuilt.map((b) => b.item));
   const keepIds = new Set(uniqueItems.map((i) => i.id));
   const built = allBuilt.filter((b) => keepIds.has(b.item.id));
@@ -490,12 +504,8 @@ async function main(): Promise<void> {
     await store.writeItems(date, mergedItems);
 
     const shardKeys = await store.listKeys('items/');
-    const dates = shardKeys.length
-      ? shardKeys
-          .map((k) => k.match(/items\/(\d{4}-\d{2}-\d{2})\.json$/)?.[1])
-          .filter((d): d is string => !!d)
-          .sort((a, b) => b.localeCompare(a))
-      : [date];
+    const cutoff = Date.now() - config.retentionDays * 86400000;
+    const dates = retainedDates(shardKeys.length ? shardKeys : [`items/${date}.json`], cutoff);
 
     const mergedReadable = mergedItems.filter((i) => i.contentLen > 0).length;
     const mergedRate = mergedItems.length
@@ -591,9 +601,7 @@ async function main(): Promise<void> {
     await store.writeHealth({ updatedAt: now, readableRate: mergedRate, sources: health });
 
     // 保留策略：keep 集覆盖全部保留分片
-    const cutoff = now - config.retentionDays * 86400000;
-    const retained = dates.filter((d) => Date.parse(d) >= cutoff);
-    await cleanup(retained, cutoff);
+    await cleanup(dates, cutoff);
 
     console.log(
       `[done] 当日 ${mergedItems.length} 条（可读 ${mergedRate}%），新增图 ${imgUp}，用时 ${(

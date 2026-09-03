@@ -18,7 +18,7 @@ checks = []
 
 with sync_playwright() as p:
     browser = p.chromium.launch(channel='msedge', headless=True)
-    def setup(content=html, favorites=None, snapshot=None, fail_shards=False, feed=None, partial=False, dates=None):
+    def setup(content=html, favorites=None, snapshot=None, fail_shards=False, feed=None, partial=False, dates=None, titles=None, authors=None, shard_items=None, fail_titles=False):
         ctx = browser.new_context(viewport={'width':390,'height':844},is_mobile=True,has_touch=True,device_scale_factor=2,service_workers='block')
         state = {'runs':0,'creates':0,'job':None,'fail':fail_shards,'feed':feed or [item,item2],'details':0,'errors':[],'dates':dates or ['2026-09-03']}
         if favorites is not None: ctx.add_init_script('localStorage.setItem("np-favorites",'+json.dumps(json.dumps(favorites))+')')
@@ -27,10 +27,15 @@ with sync_playwright() as p:
             path = urlparse(r.request.url).path
             assert 'x-admin-token' not in r.request.headers
             status = 200
-            if path == '/data/index/latest.json': value={'dates':state['dates'],'all':['test-a','test-b'],'itemCount':2,'generatedAt':now,'categories':{'AI':['test-a'],'商业':['test-b']}}
+            if path == '/api/titles':
+                status=503 if fail_titles else 200
+                value={'translations':titles or {},'pending':0,'total':len(titles or {})}
+            elif path == '/data/catalog/authors.json': value={'authors':authors or {}}
+            elif path == '/data/index/latest.json': value={'dates':state['dates'],'all':['test-a','test-b'],'itemCount':2,'generatedAt':now,'categories':{'AI':['test-a'],'商业':['test-b']}}
             elif path.startswith('/data/items/'):
                 status=503 if state['fail'] else 200
                 selected = state['feed'] if path.endswith('2026-09-03.json') else [{**item,'title':'Stale article A'}]
+                if shard_items is not None: selected=shard_items.get(path.split('/')[-1].removesuffix('.json'),selected)
                 value={'items':selected} if status == 200 else {'error':'TEST outage'}
             elif path.startswith('/data/detail/'):
                 state['details'] += 1
@@ -115,6 +120,47 @@ with sync_playwright() as p:
     assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
     page.screenshot(path=str(OUT/'settings-no-token.png'))
     passed('无令牌保存配置且保留 ETag，iPhone 设置页无横向溢出',state); ctx.close()
+
+    third={**item,'id':'test-c','sourceId':'column','sourceName':'测试专栏','title':'Third article','publishedAt':now-10}
+    older={**item,'id':'test-old','sourceId':'archive','sourceName':'较早节目','title':'Older episode','publishedAt':now-100}
+    translated={'test-a':{'original':item['title'],'text':'中文标题甲'},'test-b':{'original':item2['title'],'text':'中文标题乙'},'test-c':{'original':third['title'],'text':'另一专栏的中文标题'},'test-old':{'original':older['title'],'text':'较早的节目内容'}}
+    ctx,page,state=setup(feed=[item,item2,third],titles=translated,authors={'test-a':'测试作者','test-c':'测试作者'},dates=['2026-09-03','2026-09-02','2026-09-01','2026-08-31'],shard_items={'2026-09-02':[],'2026-09-01':[],'2026-08-31':[older]})
+    expect(page.get_by_text('中文标题甲',exact=True)).to_be_visible()
+    page.get_by_role('searchbox',name='搜索').fill('中文标题甲')
+    expect(page.get_by_text('中文标题甲',exact=True)).to_be_visible()
+    page.get_by_role('button',name='清除',exact=True).click()
+    page.locator('nav').last.get_by_role('button',name='目录',exact=True).click()
+    expect(page.get_by_role('button',name='打开较早节目目录',exact=True)).to_be_visible()
+    page.screenshot(path=str(OUT/'directory-iphone.png'))
+    page.get_by_role('button',name='打开测试源目录',exact=True).click()
+    expect(page.get_by_text('中文标题甲',exact=True)).to_be_visible()
+    expect(page.get_by_text('中文标题乙',exact=True)).to_be_visible()
+    assert page.get_by_text('另一专栏的中文标题',exact=True).count()==0
+    page.screenshot(path=str(OUT/'directory-source-iphone.png'))
+    open_article(page,'中文标题甲')
+    expect(page.get_by_role('heading',name='中文标题甲',exact=True,level=1)).to_be_visible()
+    expect(page.get_by_text(item['title'],exact=True)).to_be_visible()
+    assert page.get_by_role('button',name='翻译标题',exact=True).count()==0
+    page.get_by_role('button',name='收藏',exact=True).last.click()
+    expect(page.get_by_role('button',name='取消收藏').last).to_be_visible()
+    page.get_by_role('button',name='返回',exact=True).click()
+    page.locator('.prose-news').wait_for(state='detached')
+    expect(page.get_by_role('button',name='返回目录',exact=True)).to_be_visible()
+    page.get_by_role('button',name='返回目录',exact=True).click()
+    page.get_by_role('button',name='作者',exact=True).click()
+    page.get_by_role('button',name='打开测试作者目录',exact=True).click()
+    expect(page.get_by_text('中文标题甲',exact=True)).to_be_visible()
+    expect(page.get_by_text('另一专栏的中文标题',exact=True)).to_be_visible()
+    assert page.get_by_text('中文标题乙',exact=True).count()==0
+    assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+    page.locator('nav').last.get_by_role('button',name='收藏').click()
+    expect(page.get_by_text('中文标题甲',exact=True)).to_be_visible()
+    passed('全保留期目录、同节目归并、跨来源作者、中英标题搜索与收藏阅读',state);ctx.close()
+
+    ctx,page,state=setup(fail_titles=True)
+    expect(page.get_by_text('中文标题暂时无法更新',exact=False)).to_be_visible()
+    expect(page.get_by_text(item['title'],exact=True)).to_be_visible()
+    passed('标题服务失败如实显示原题并保持可阅读',state);ctx.close()
 
     ctx,page,state=setup(partial=True)
     open_article(page)
