@@ -17,14 +17,23 @@ import type { Item, ItemDetail, TranscribeQueue } from './types.js';
  * 4 × 180 = 720 分钟/天，会直接跑出免费额度开始计费。
  * 当日用量记在队列文件里，按 UTC 日期跨天归零。
  *
- * 后端可切：TRANSCRIBE_BACKEND=local 时改用本机 GPU（whisper-local.ts），
- * 不消耗 Workers AI 额度，因此不做每日上限、也不读写 usage/blockedUntil ——
- * 那两个字段是 Cloudflare 那条路的账，本地跑必须原样带回去，不能覆盖。
+ * 后端三选一，TRANSCRIBE_BACKEND：
+ *   cf（默认）  Workers AI，免费但每天只有 214 分钟且重置时间不可靠
+ *   local       本机 GPU，无上限但要求机器开着
+ *   openrouter  按量付费，跑在 Actions 上，关机也照转
+ * 只有 cf 这条路要记额度：另外两条不消耗 Workers AI，因此不做每日上限、
+ * 也不读写 usage/blockedUntil —— 那两个字段是 Cloudflare 那条路的账，
+ * 必须原样带回去，抹掉等于把每日上限清零，这个坑已经踩过一次。
  */
-const BACKEND = process.env.TRANSCRIBE_BACKEND === 'local' ? 'local' : 'cf';
-const LOCAL = BACKEND === 'local';
+const BACKENDS = { cf: './whisper.js', local: './whisper-local.js', openrouter: './whisper-openrouter.js' } as const;
+type Backend = keyof typeof BACKENDS;
+const BACKEND: Backend = (process.env.TRANSCRIBE_BACKEND ?? 'cf') in BACKENDS
+  ? ((process.env.TRANSCRIBE_BACKEND ?? 'cf') as Backend)
+  : 'cf';
+/** 只有 Workers AI 这条路要限额度记账 */
+const CF = BACKEND === 'cf';
 const DAILY_CAP = parseInt(process.env.TRANSCRIBE_DAILY_CAP ?? '200', 10);
-const RUN_BUDGET = parseInt(process.env.TRANSCRIBE_MINUTES ?? (LOCAL ? '100000' : '90'), 10);
+const RUN_BUDGET = parseInt(process.env.TRANSCRIBE_MINUTES ?? (CF ? '90' : '100000'), 10);
 const MAX_ATTEMPTS = 3;
 /** 撞到额度后等多久再试。比 cron 间隔略短，保证每次定时都会真的探一下 */
 const QUOTA_BACKOFF_MS = 3 * 60 * 60 * 1000;
@@ -118,7 +127,7 @@ async function patchShards(completed: Completed[]): Promise<void> {
 async function main(): Promise<void> {
   assertCloudflareCreds();
 
-  const backend = LOCAL ? await import('./whisper-local.js') : await import('./whisper.js');
+  const backend = await import(BACKENDS[BACKEND]);
   const envErr = await backend.checkEnv();
   if (envErr) {
     console.error(`[fatal] ${BACKEND} 后端不可用：${envErr}`);
@@ -128,20 +137,20 @@ async function main(): Promise<void> {
   const queue = await loadQueue();
   const today = utcDate();
   const usedToday = queue.usage?.utcDate === today ? queue.usage.minutes : 0;
-  const budget = LOCAL ? RUN_BUDGET : Math.max(0, Math.min(RUN_BUDGET, DAILY_CAP - usedToday));
+  const budget = CF ? Math.max(0, Math.min(RUN_BUDGET, DAILY_CAP - usedToday)) : RUN_BUDGET;
 
   const pending = queue.tasks.filter((t) => t.attempts < MAX_ATTEMPTS);
   console.log(
     `[start] 后端 ${BACKEND} | 队列 ${queue.tasks.length} 条，可处理 ${pending.length} 条 | ` +
-      (LOCAL
-        ? `本次上限 ${budget} 分钟（本地跑，不占 Workers AI 额度）`
-        : `本次额度 ${budget} 分钟（单次上限 ${RUN_BUDGET}，今日已用 ${usedToday}/${DAILY_CAP}）`),
+      (CF
+        ? `本次额度 ${budget} 分钟（单次上限 ${RUN_BUDGET}，今日已用 ${usedToday}/${DAILY_CAP}）`
+        : `本次上限 ${budget} 分钟（不占 Workers AI 额度）`),
   );
   if (!pending.length) {
     console.log('[done] 队列为空');
     return;
   }
-  if (!LOCAL && queue.blockedUntil && Date.now() < queue.blockedUntil) {
+  if (CF && queue.blockedUntil && Date.now() < queue.blockedUntil) {
     const mins = Math.ceil((queue.blockedUntil - Date.now()) / 60000);
     console.log(`[done] 上次撞到 Workers AI 额度，还需退避 ${mins} 分钟`);
     return;
@@ -193,7 +202,7 @@ async function main(): Promise<void> {
       done.add(task.id);
       console.log(
         `[ok] ${t.text.length} 字 / 阅读约 ${minutes} 分钟 / 音频 ${t.audioMinutes} 分钟，` +
-          (LOCAL ? `本次累计 ${usedMinutes} 分钟` : `本次 ${usedMinutes}/${budget}，今日 ${usedToday + usedMinutes}/${DAILY_CAP}`),
+          (CF ? `本次 ${usedMinutes}/${budget}，今日 ${usedToday + usedMinutes}/${DAILY_CAP}` : `本次累计 ${usedMinutes} 分钟`),
       );
     } catch (err) {
       // 额度耗尽不是这条任务的问题：立刻收工，不累加 attempts，
@@ -222,18 +231,18 @@ async function main(): Promise<void> {
   await store.writeQueue({
     updatedAt: Date.now(),
     tasks: remaining,
-    // 本地后端不烧 Workers AI 额度，原样带回 Cloudflare 那条路的账；
+    // local / openrouter 不烧 Workers AI 额度，原样带回 Cloudflare 那条路的账；
     // 抹掉它等于把每日上限清零，这个坑已经踩过一次
-    usage: LOCAL ? queue.usage : { utcDate: today, minutes: usedToday + usedMinutes },
+    usage: CF ? { utcDate: today, minutes: usedToday + usedMinutes } : queue.usage,
     // 撞到 429 就退避一段时间再试，而不是把整天判死：
     // Cloudflare 的重置时间实测不可靠，额度什么时候回来只能探
-    blockedUntil: LOCAL ? queue.blockedUntil : quotaHit ? Date.now() + QUOTA_BACKOFF_MS : undefined,
+    blockedUntil: CF ? (quotaHit ? Date.now() + QUOTA_BACKOFF_MS : undefined) : queue.blockedUntil,
   });
 
   console.log(
     `[done] 转写 ${done.size} 条，放弃 ${dropped} 条，剩余 ${remaining.length} 条，` +
       `本次 ${usedMinutes} 分钟音频，` +
-      (LOCAL ? '' : `今日累计 ${usedToday + usedMinutes}/${DAILY_CAP}，`) +
+      (CF ? `今日累计 ${usedToday + usedMinutes}/${DAILY_CAP}，` : '') +
       `用时 ${((Date.now() - startedAt) / 1000).toFixed(0)}s`,
   );
 }

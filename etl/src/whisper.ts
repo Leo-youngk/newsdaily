@@ -1,9 +1,6 @@
-import { spawn } from 'node:child_process';
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { CHUNK_SECONDS, cleanup, downloadAndChunk, hasFfmpeg } from './audio.js';
 import { config } from './config.js';
-import { fetchUrl } from './fetch.js';
 
 /**
  * 用 Cloudflare Workers AI 的 whisper-large-v3-turbo 转写播客。
@@ -16,8 +13,6 @@ import { fetchUrl } from './fetch.js';
  */
 
 const MODEL = '@cf/openai/whisper-large-v3-turbo';
-/** 每片 5 分钟：16kHz 单声道 32kbps mp3 约 1.2MB，base64 后 1.6MB，请求体很安全 */
-const CHUNK_SECONDS = 300;
 
 /** 额度耗尽。与普通失败区分开：不该记到任务头上，也不该继续试下一条。 */
 export class QuotaExceededError extends Error {
@@ -39,28 +34,6 @@ export interface Transcription {
   durationSec: number;
   /** 实际计费的音频分钟数，用于控制额度 */
   audioMinutes: number;
-}
-
-function run(cmd: string, args: string[]): Promise<{ code: number; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { stdio: ['ignore', 'ignore', 'pipe'] });
-    let stderr = '';
-    p.stderr.on('data', (d) => {
-      stderr += d.toString();
-      if (stderr.length > 8000) stderr = stderr.slice(-4000);
-    });
-    p.on('error', reject);
-    p.on('close', (code) => resolve({ code: code ?? -1, stderr }));
-  });
-}
-
-async function hasFfmpeg(): Promise<boolean> {
-  try {
-    const { code } = await run('ffmpeg', ['-version']);
-    return code === 0;
-  } catch {
-    return false;
-  }
 }
 
 /** 环境自检，返回错误说明；null 表示可用。与 whisper-local.ts 同构。 */
@@ -133,32 +106,14 @@ export async function transcribeAudio(
   audioUrl: string,
   lang: 'zh' | 'en',
 ): Promise<Transcription> {
-  const dir = await mkdtemp(path.join(tmpdir(), 'np-tr-'));
+  const chunked = await downloadAndChunk(audioUrl);
   try {
-    const res = await fetchUrl(audioUrl, { timeout: 120000, retries: 1 });
-    const raw = Buffer.from(await res.arrayBuffer());
-    if (raw.length < 10000) throw new Error(`音频过小（${raw.length} 字节），可能是错误页`);
-    const src = path.join(dir, 'src.audio');
-    await writeFile(src, raw);
-
-    const { code, stderr } = await run('ffmpeg', [
-      '-hide_banner', '-loglevel', 'error', '-nostdin',
-      '-i', src,
-      '-vn', '-ac', '1', '-ar', '16000', '-b:a', '32k',
-      '-f', 'segment', '-segment_time', String(CHUNK_SECONDS),
-      path.join(dir, 'part_%04d.mp3'),
-    ]);
-    if (code !== 0) throw new Error(`ffmpeg 失败：${stderr.slice(0, 200)}`);
-
-    const parts = (await readdir(dir)).filter((f) => f.startsWith('part_')).sort();
-    if (!parts.length) throw new Error('ffmpeg 没有产出切片');
-
     const segments: Segment[] = [];
     const texts: string[] = [];
     let duration = 0;
 
-    for (let i = 0; i < parts.length; i++) {
-      const buf = await readFile(path.join(dir, parts[i]));
+    for (let i = 0; i < chunked.parts.length; i++) {
+      const buf = await readFile(chunked.parts[i]);
       const offset = i * CHUNK_SECONDS;
       const r = await callWhisper(buf, lang);
       if (r.text) texts.push(r.text);
@@ -178,7 +133,7 @@ export async function transcribeAudio(
       audioMinutes: Math.ceil(duration / 60),
     };
   } finally {
-    await rm(dir, { recursive: true, force: true }).catch(() => {});
+    await cleanup(chunked);
   }
 }
 
