@@ -222,6 +222,11 @@ export function segmentsToHtml(t: Transcription, lang: 'zh' | 'en'): string {
   // 否则就是一屏 460 字的墙；顺带让时间戳更密，点哪句跳哪句
   const punctuated = isPunctuated(t.text);
   const maxChars = lang === 'en' ? 600 : punctuated ? 260 : 120;
+  // whisper 的每个 segment 本身就是一个短语（中文对话实测每 5 分钟 154 段，
+  // 平均十来个字）。没有标点时这些边界是全篇唯一的断句依据，
+  // 拼接必须留空格 —— 用 '' 拼回去就是把 whisper 已经断好的句子又粘死了，
+  // 这正是 OpenAI 自己在顶层 text 里的做法。
+  const glue = lang === 'en' || !punctuated ? ' ' : '';
   const out: string[] = [];
   let buf: string[] = [];
   let start = t.segments[0].start;
@@ -229,7 +234,7 @@ export function segmentsToHtml(t: Transcription, lang: 'zh' | 'en'): string {
 
   const flush = () => {
     if (!buf.length) return;
-    const body = buf.join(lang === 'zh' ? '' : ' ').trim();
+    const body = buf.join(glue).trim();
     if (body) {
       out.push(
         `<p data-t="${Math.floor(start)}"><span class="ts">${fmtTime(start)}</span>${esc(body)}</p>`,
@@ -245,7 +250,9 @@ export function segmentsToHtml(t: Transcription, lang: 'zh' | 'en'): string {
     len += s.text.length;
     // 攒够长度且落在句末就断段，避免把一句话切两半；
     // 万一模型仍然不给标点，按长度硬断，不能让一段几千字连成一片
-    if (len >= maxChars && /[。！？.!?…」』"']$/.test(s.text)) flush();
+    // 有标点时攒够长度且落在句末才断，避免把一句话切两半；
+    // 没标点时句末判据永远不成立，直接按长度断，否则会一路撑到硬顶
+    if (len >= maxChars && (!punctuated || /[。！？.!?…」』"']$/.test(s.text))) flush();
     else if (len >= maxChars * 1.8) flush();
   }
   flush();
