@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "updatedAt": 0,
   "categories": {
     "访谈": true,
@@ -562,6 +562,43 @@
       "limit": 5,
       "minChars": 2000,
       "note": "实测 3/3 达标（4,430 / 4,327 / 6,530 字）"
+    },
+    {
+      "id": "practicalai",
+      "name": "Practical AI",
+      "url": "https://changelog.com/practicalai/feed",
+      "category": "AI",
+      "lang": "en",
+      "readable": "transcript",
+      "enabled": true,
+      "limit": 4,
+      "minChars": 20000,
+      "note": "feed 原生带 <podcast:transcript>，每集 5 个直链（txt/html/json/vtt/srt）。实测近两集纯文本 43,650 / 38,505 字，零转写成本"
+    },
+    {
+      "id": "acquired",
+      "name": "Acquired",
+      "url": "https://feeds.transistor.fm/acquired",
+      "category": "商业",
+      "lang": "en",
+      "readable": "extract",
+      "contentSelector": ".episode-rich-text",
+      "enabled": true,
+      "limit": 2,
+      "minChars": 20000,
+      "note": "逐字稿内嵌在单集页，但 Defuddle 只挑出 2 千字的章节目录，必须指定选择器；实测两集各 258,262 / 258,631 字。feed 里没有 <podcast:transcript> 标签。单集 4.5 小时、月更两集，limit 给 2 就够"
+    },
+    {
+      "id": "changelog",
+      "name": "The Changelog",
+      "url": "https://changelog.com/podcast/feed",
+      "category": "科技",
+      "lang": "en",
+      "readable": "extract",
+      "enabled": false,
+      "limit": 4,
+      "minChars": 20000,
+      "note": "停用：逐字稿滞后约八个月。实测 #672（2026-01-07）有 64,408 字，#674（2026-01-29）之后到最新的 #684 全部只有 1,800~4,400 字的 shownotes。日更阅读器等不到，feed 里也没有 <podcast:transcript> 标签"
     }
   ]
 }

@@ -42,6 +42,11 @@ export interface SourceConfig {
   readable: Readable;
   /** readable=transcript 时的文稿页推导规则；没有则只依赖 <podcast:transcript> 标签 */
   transcript?: TranscriptRule;
+  /**
+   * 正文容器的 CSS 选择器，给通用提取算法挑错容器的站点用。
+   * 只在确实需要时才写：站点改版会让它失效，日志里会警告并退回通用提取。
+   */
+  contentSelector?: string;
   enabled: boolean;
   /** 每次运行从该源最多保留几条 */
   limit: number;

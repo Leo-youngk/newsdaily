@@ -161,7 +161,7 @@ async function resolveContent(
 
   // 2) 播客逐字稿：<podcast:transcript> 标签 → 文稿页规则
   if (s.readable === 'transcript' || s.readable === 'transcribe') {
-    const t = await resolveTranscript(url, entry.transcripts, s.transcript, min);
+    const t = await resolveTranscript(url, entry.transcripts, s.transcript, min, s.contentSelector);
     if (t) return { html: t.html, text: t.text, source: t.source };
   }
 
@@ -182,7 +182,7 @@ async function resolveContent(
   }
 
   // 4) 兜底：抓原文页做正文提取（readable=extract 的主路径，也是前两条的降级）
-  const ex = await extractFromUrl(url);
+  const ex = await extractFromUrl(url, s.contentSelector);
   if (ex && ex.text.length >= min) {
     return { html: ex.html, text: ex.text, source: 'extract', pageHtml: ex.pageHtml };
   }

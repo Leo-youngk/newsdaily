@@ -40,6 +40,7 @@ export async function resolveTranscript(
   refs: TranscriptRef[],
   rule: TranscriptRule | undefined,
   minChars: number,
+  selector?: string,
 ): Promise<ResolvedTranscript | null> {
   // 1) <podcast:transcript> 标签
   for (const ref of refs.slice(0, 2)) {
@@ -60,7 +61,7 @@ export async function resolveTranscript(
   // 2) 文稿页规则
   const derived = deriveTranscriptUrl(pageUrl, rule);
   if (derived) {
-    const ex = await extractFromUrl(derived);
+    const ex = await extractFromUrl(derived, selector);
     if (ex && ex.text.length >= minChars) {
       return { html: ex.html, text: ex.text, source: 'transcript-page', from: derived };
     }
