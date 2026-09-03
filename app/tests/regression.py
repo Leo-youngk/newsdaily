@@ -28,6 +28,9 @@ with sync_playwright() as p:
             assert 'x-admin-token' not in r.request.headers
             status = 200
             if path == '/api/titles':
+                if fail_titles == 'hang':
+                    state['hanging_route']=r
+                    return
                 status=503 if fail_titles else 200
                 value={'translations':titles or {},'pending':0,'total':len(titles or {})}
             elif path == '/data/catalog/authors.json': value={'authors':authors or {}}
@@ -157,10 +160,13 @@ with sync_playwright() as p:
     expect(page.get_by_text('中文标题甲',exact=True)).to_be_visible()
     passed('全保留期目录、同节目归并、跨来源作者、中英标题搜索与收藏阅读',state);ctx.close()
 
-    ctx,page,state=setup(fail_titles=True)
+    slow_start=time.monotonic()
+    ctx,page,state=setup(fail_titles='hang')
+    assert time.monotonic()-slow_start < 10
     expect(page.get_by_text('中文标题暂时无法更新',exact=False)).to_be_visible()
     expect(page.get_by_text(item['title'],exact=True)).to_be_visible()
-    passed('标题服务失败如实显示原题并保持可阅读',state);ctx.close()
+    state['hanging_route'].abort()
+    passed('标题服务挂起五秒内降级到原题，不阻塞阅读一分钟',state);ctx.close()
 
     ctx,page,state=setup(partial=True)
     open_article(page)

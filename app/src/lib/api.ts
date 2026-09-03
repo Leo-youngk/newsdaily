@@ -46,9 +46,14 @@ export const dataApi = {
   detail: (id: string) =>
     getJson<import('../types').ItemDetail>(`/data/detail/${id}.json`),
   config: () => getJson<import('../types').AppConfig>('/api/config', 'no-store'),
-  titles: () => getJson<TitleIndex>('/api/titles', 'no-store'),
+  titles: async (): Promise<TitleIndex> => {
+    // 译文是增强信息，服务挂起时不能阻塞正文加载一分钟。
+    const res = await fetch(`${API_BASE}/api/titles`, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+    if (!res.ok) throw new Error(`中文标题暂不可用（HTTP ${res.status}）`);
+    return await res.json() as TitleIndex;
+  },
   authors: async (): Promise<Record<string, string>> => {
-    const res = await fetch(`${API_BASE}/data/catalog/authors.json`, { cache: 'no-cache', signal: AbortSignal.timeout(15000) });
+    const res = await fetch(`${API_BASE}/data/catalog/authors.json`, { cache: 'no-cache', signal: AbortSignal.timeout(5000) });
     if (res.status === 404) return {};
     if (!res.ok) throw new Error(`作者目录暂不可用（HTTP ${res.status}）`);
     const value = await res.json() as { authors?: Record<string, string> };
