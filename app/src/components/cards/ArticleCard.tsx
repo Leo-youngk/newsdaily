@@ -6,6 +6,8 @@ import FavButton from '../FavButton';
 interface Props {
   item: Item;
   read: boolean;
+  /** 阅读进度 0~1，只有读到一半的条目才有 */
+  progress?: number;
   favorite: boolean;
   density: 'compact' | 'standard';
   onOpen: (item: Item) => void;
@@ -20,12 +22,17 @@ interface Props {
 export default function ArticleCard({
   item,
   read,
+  progress,
   favorite,
   density,
   onOpen,
   onToggleFavorite,
 }: Props) {
   const compact = density === 'compact';
+  // 27% 的内容超过 20 分钟，读一半退出是常态。
+  // 与其显示总时长，不如告诉他还剩多久 —— 这才是决定"现在读不读"的信息。
+  const partial = progress != null && progress > 0.02 && progress < 0.98;
+  const leftMinutes = partial ? Math.max(1, Math.round(item.readingMinutes * (1 - progress!))) : 0;
   const transcript = isTranscript(item);
   const pending = isPending(item);
 
@@ -91,9 +98,16 @@ export default function ArticleCard({
                 EN
               </span>
             )}
+            {/* 读到一半的条目不另起一个 chip：375px 下这一行本来就挤，
+                多一个就会把「逐字稿」折成两行。直接把总时长换成剩余时长，
+                信息量更大，占位反而更少。 */}
             {item.readingMinutes > 0 && (
-              <span className="text-ink-faint dark:text-[#8b8478]">
-                {readingLabel(item.readingMinutes)}
+              <span
+                className={`whitespace-nowrap ${
+                  partial ? 'font-medium text-accent' : 'text-ink-faint dark:text-[#8b8478]'
+                }`}
+              >
+                {partial ? `还剩 ${readingLabel(leftMinutes)}` : readingLabel(item.readingMinutes)}
               </span>
             )}
             <FavButton

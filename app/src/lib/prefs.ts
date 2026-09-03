@@ -10,10 +10,28 @@ const KEY = {
   autoTranslate: 'np-auto-translate',
   categoryOrder: 'np-category-order',
   fontScale: 'np-font-scale',
+  progress: 'np-progress',
 };
 
 /** 阅读字号档位 */
 export type FontScale = 's' | 'm' | 'l' | 'xl';
+
+/**
+ * 阅读进度：id -> 已读比例(0~1)。
+ * 存比例而不是像素，因为字号可调、窗口宽度会变，像素位置换个环境就没意义了。
+ * 只记"读到一半"的：读完的删掉，免得卡片上永远挂着"读到 99%"。
+ */
+const PROGRESS_MAX = 300;
+
+function readProgress(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(KEY.progress);
+    const v = raw ? JSON.parse(raw) : {};
+    return v && typeof v === 'object' ? (v as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
 
 function readSet(key: string): Set<string> {
   try {
@@ -66,6 +84,28 @@ export const prefs = {
   },
   clearRead(): void {
     localStorage.removeItem(KEY.read);
+  },
+  // 阅读进度
+  getProgress(): Record<string, number> {
+    return readProgress();
+  },
+  setProgress(id: string, ratio: number): void {
+    const all = readProgress();
+    // 读完（或几乎没开始）就不必记，省得列表里全是噪声
+    if (ratio >= 0.98 || ratio <= 0.02) delete all[id];
+    else {
+      delete all[id]; // 先删再写，让键的插入顺序等于最近使用顺序
+      all[id] = Math.round(ratio * 100) / 100;
+    }
+    const keys = Object.keys(all);
+    if (keys.length > PROGRESS_MAX) {
+      for (const k of keys.slice(0, keys.length - PROGRESS_MAX)) delete all[k];
+    }
+    try {
+      localStorage.setItem(KEY.progress, JSON.stringify(all));
+    } catch {
+      // 配额满了就算了，进度不是必须品，不能因此让阅读页崩掉
+    }
   },
   // 管理令牌（用于 PUT /api/config）
   getAdminToken(): string {

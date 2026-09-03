@@ -69,7 +69,8 @@
   }
 
   .chip {
-    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+    /* chip 是标签不是段落，任何情况下都不该在中间断行 */
+    @apply inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium;
   }
 
   .btn {

@@ -6,6 +6,7 @@ import ArticleCard from './cards/ArticleCard';
 interface Props {
   items: Item[];
   readSet: Set<string>;
+  progress: Record<string, number>;
   favorites: Set<string>;
   density: 'compact' | 'standard';
   onOpen: (item: Item) => void;
@@ -16,6 +17,7 @@ interface Props {
 export default function FeedList({
   items,
   readSet,
+  progress,
   favorites,
   density,
   onOpen,
@@ -49,6 +51,7 @@ export default function FeedList({
               <ArticleCard
                 item={items[v.index]}
                 read={readSet.has(items[v.index].id)}
+                progress={progress[items[v.index].id]}
                 favorite={favorites.has(items[v.index].id)}
                 density={density}
                 onOpen={onOpen}

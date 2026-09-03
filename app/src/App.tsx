@@ -20,6 +20,7 @@ export default function App() {
   const [reader, setReader] = useState<Item | null>(null);
   const [favorites, setFavorites] = useState<Set<string>>(() => prefs.getFavorites());
   const [readSet, setReadSet] = useState<Set<string>>(() => prefs.getRead());
+  const [progress, setProgress] = useState<Record<string, number>>(() => prefs.getProgress());
   // 密度与排序放在 App 状态里：原来只监听 storage 事件，
   // 而该事件只跨标签页触发，同页改了设置资讯页纹丝不动
   const [density, setDensity] = useState(() => prefs.getDensity());
@@ -64,6 +65,12 @@ export default function App() {
   }, [news.items, tab, category, query, favorites, sort]);
 
   const closeReader = useCallback(() => setReader(null), []);
+
+  // 阅读页卸载时会把进度落盘，之后再读回来刷新列表上的"读到 xx%"。
+  // 必须放在 effect 里：closeReader 里读会拿到卸载前的旧值。
+  useEffect(() => {
+    if (!reader) setProgress(prefs.getProgress());
+  }, [reader]);
 
   const openReader = useCallback((item: Item) => {
     setReader(item);
@@ -192,6 +199,7 @@ export default function App() {
               key={`${tab}:${category}:${query}:${sort}`}
               items={visibleItems}
               readSet={readSet}
+              progress={progress}
               favorites={favorites}
               density={density}
               onOpen={openReader}

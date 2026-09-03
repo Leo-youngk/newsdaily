@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { isPending, isTranscript, type Item, type ItemDetail } from '../types';
 import { dataApi } from '../lib/api';
 import { summarize, translateBody, translateTitle, type AiResult } from '../lib/ai';
@@ -39,6 +39,10 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
   const [loadingDetail, setLoadingDetail] = useState(item.contentLen > 0);
   const [scale, setScale] = useState<FontScale>(() => prefs.getFontScale());
   const audioRef = useRef<HTMLAudioElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const restoredRef = useRef(false);
+  const saveTimer = useRef<number | null>(null);
+  const [progress, setProgress] = useState(0);
   const summary = useAi();
   const titleTr = useAi();
   const bodyTr = useAi();
@@ -69,11 +73,56 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
     };
   }, [item.id, item.contentLen]);
 
+  // 阅读进度：27% 的内容超过 20 分钟，Lex Fridman 平均一篇 166 分钟，
+  // 不记位置的话每次退出再进都要从头翻。
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const max = el.scrollHeight - el.clientHeight;
+    const ratio = max > 0 ? Math.min(1, el.scrollTop / max) : 0;
+    setProgress(ratio);
+    if (!restoredRef.current) return; // 恢复完成前别把 0 写回去
+    if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(() => prefs.setProgress(item.id, ratio), 350);
+  };
+
+  // 正文渲染完再恢复位置。用 layout effect + rAF：
+  // 等这一帧的布局定下来，否则 scrollHeight 还是骨架屏的高度，跳不到位。
+  useLayoutEffect(() => {
+    if (restoredRef.current || !detail) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const saved = prefs.getProgress()[item.id] ?? 0;
+    const id = requestAnimationFrame(() => {
+      const max = el.scrollHeight - el.clientHeight;
+      if (saved > 0 && max > 0) el.scrollTop = saved * max;
+      restoredRef.current = true;
+      onScroll();
+    });
+    return () => cancelAnimationFrame(id);
+  }, [detail, item.id]);
+
+  // 退出时立刻落盘，不等防抖
+  useEffect(
+    () => () => {
+      if (saveTimer.current) window.clearTimeout(saveTimer.current);
+      const el = scrollRef.current;
+      if (!el || !restoredRef.current) return;
+      const max = el.scrollHeight - el.clientHeight;
+      prefs.setProgress(item.id, max > 0 ? Math.min(1, el.scrollTop / max) : 0);
+    },
+    [item.id],
+  );
+
   const transcript = isTranscript(item);
   const pending = isPending(item);
 
   return (
-    <div className="fixed inset-0 z-40 touch-pan-y overflow-y-auto overscroll-y-contain bg-paper dark:bg-[#14130f]">
+    <div
+      ref={scrollRef}
+      onScroll={onScroll}
+      className="fixed inset-0 z-40 touch-pan-y overflow-y-auto overscroll-y-contain bg-paper dark:bg-[#14130f]"
+    >
       <header className="sticky top-0 z-10 border-b hairline bg-paper/85 pt-safe backdrop-blur-md dark:bg-[#14130f]/85">
         <div className="mx-auto flex max-w-reading items-center gap-1 px-4 py-2.5">
           <button onClick={onClose} className="btn-ghost -ml-1.5" aria-label="返回">
@@ -117,6 +166,13 @@ export default function ReaderView({ item, onClose, favorite, onToggleFavorite }
               <path d="M6 4h12v17l-6-4.2L6 21z" />
             </svg>
           </button>
+        </div>
+        {/* 进度条压在 header 底边上：绝对定位不占高度，正文加载完也不会把页面顶下去 */}
+        <div className="absolute inset-x-0 bottom-0 h-[2px]" aria-hidden>
+          <div
+            className="h-full bg-accent/70 transition-[width] duration-150"
+            style={{ width: `${Math.round(progress * 100)}%` }}
+          />
         </div>
       </header>
 
