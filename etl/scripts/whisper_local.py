@@ -44,6 +44,16 @@ def _add_cuda_dll_dirs() -> None:
 
 _add_cuda_dll_dirs()
 
+# Windows 上 stdout 被管道接走时默认用系统 ANSI 代码页（中文机器上是 GBK）。
+# 中文逐字稿按 GBK 写出、被 node 按 UTF-8 读回，就是整篇乱码 ——
+# 退出码 0、字数看着合理、日志全绿，只有真去读文本才发现是垃圾。
+# 偶尔遇到 GBK 编不出来的字符才会抛 UnicodeEncodeError 暴露出来。
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:  # noqa: BLE001
+        pass
+
 from faster_whisper import WhisperModel  # noqa: E402
 
 # 与 etl/src/whisper.ts 保持一致：中文不给引导词的话几乎不输出标点，
@@ -80,7 +90,8 @@ def main() -> int:
     args = ap.parse_args()
 
     device, compute_type = pick_device(args.device)
-    print(f'[local] device={device} compute={compute_type} model={args.model}', file=sys.stderr)
+    print(f'[local] device={device} compute={compute_type} model={args.model} '
+          f'condition={args.condition} no_repeat={args.no_repeat}', file=sys.stderr)
 
     try:
         model = WhisperModel(args.model, device=device, compute_type=compute_type)

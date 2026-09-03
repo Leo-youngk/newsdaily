@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,6 +22,11 @@ const VENV_PY =
   process.platform === 'win32'
     ? path.join(REPO_ROOT, '.venv-whisper', 'Scripts', 'python.exe')
     : path.join(REPO_ROOT, '.venv-whisper', 'bin', 'python');
+
+/** 0xC0000142 STATUS_DLL_INIT_FAILED：上一个进程的显存还没释放，CUDA 初始化不上 */
+const DLL_INIT_FAILED = 3221225794;
+/** 一集转完到下一集之间留的间隔，给驱动时间回收显存 */
+const COOLDOWN_MS = 4000;
 
 const MODEL = process.env.WHISPER_LOCAL_MODEL ?? 'large-v3-turbo';
 const DEVICE = process.env.WHISPER_LOCAL_DEVICE ?? 'auto';
@@ -60,14 +65,16 @@ interface PyResult {
   device: string;
 }
 
-function runPython(py: string, args: string[]): Promise<PyResult> {
+function runPython(py: string, args: string[], resultFile: string): Promise<PyResult> {
   return new Promise((resolve, reject) => {
-    const p = spawn(py, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let out = '';
-    let err = '';
-    p.stdout.on('data', (d) => {
-      out += d.toString();
+    // 结果走文件而不是 stdout：Windows 上 python 的 stdout 被管道接走时
+    // 默认按系统 ANSI 代码页编码，中文逐字稿会整篇变成乱码。
+    // PYTHONIOENCODING 是第二道保险，管住剩下那些 print。
+    const p = spawn(py, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
     });
+    let err = '';
     p.stderr.on('data', (d) => {
       const s = d.toString();
       err += s;
@@ -78,12 +85,13 @@ function runPython(py: string, args: string[]): Promise<PyResult> {
       }
     });
     p.on('error', reject);
-    p.on('close', (code) => {
+    p.on('close', async (code) => {
       if (code !== 0) return reject(new Error(`whisper_local 退出码 ${code}：${err.slice(-400)}`));
       try {
-        resolve(JSON.parse(out) as PyResult);
-      } catch {
-        reject(new Error(`whisper_local 输出不是 JSON：${out.slice(0, 200)}`));
+        const raw = await readFile(resultFile, 'utf8');
+        resolve(JSON.parse(raw) as PyResult);
+      } catch (e) {
+        reject(new Error(`读不到 whisper_local 的结果文件：${(e as Error).message}`));
       }
     });
   });
@@ -103,13 +111,21 @@ export async function transcribeAudio(
     const src = path.join(dir, 'src.audio');
     await writeFile(src, raw);
 
-    const r = await runPython(py, [
-      SCRIPT,
-      '--audio', src,
-      '--lang', lang,
-      '--model', MODEL,
-      '--device', DEVICE,
-    ]);
+    const resultFile = path.join(dir, 'result.json');
+    const argv = [SCRIPT, '--audio', src, '--lang', lang, '--model', MODEL, '--device', DEVICE, '--out', resultFile];
+
+    let r: PyResult;
+    try {
+      r = await runPython(py, argv, resultFile);
+    } catch (e) {
+      // 4G 显存的笔记本显卡上，上一集刚退出、显存还没回收完，
+      // 下一个进程会直接死在 DLL 初始化（0xC0000142），跟音频本身无关。
+      // 等一会儿重来一次就好，不该记到这条任务头上。
+      if (!(e as Error).message.includes(String(DLL_INIT_FAILED))) throw e;
+      console.log('  [local] 显存尚未释放，等 10 秒重试一次');
+      await new Promise((res) => setTimeout(res, 10000));
+      r = await runPython(py, argv, resultFile);
+    }
 
     const text = (r.text ?? '').trim();
     if (!text) throw new Error('转写结果为空');
@@ -123,5 +139,7 @@ export async function transcribeAudio(
     };
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {});
+    // 给驱动一点时间把显存还回来，否则下一集大概率死在 CUDA 初始化
+    await new Promise((res) => setTimeout(res, COOLDOWN_MS));
   }
 }
