@@ -1,7 +1,11 @@
 name: 播客转写
 
-# 与采集分开跑：采集只负责把没有现成文字稿的播客入队，
-# 这里按 Workers AI 的免费额度把队列消化掉。
+# 与采集分开跑：采集只负责把没有现成文字稿的播客入队，这里把队列消化掉。
+#
+# 后端用 OpenRouter 而不是 Workers AI：免费层每天只有 214 音频分钟，
+# 且实测不按 00:00 UTC 重置，队列长期积压。OpenRouter 按量付费，
+# whisper-1 $0.006/音频分钟，跑在 Actions 上跟本机开不开机无关。
+# 选型依据见 etl/src/whisper-openrouter.ts 顶部的实测表。
 on:
   schedule:
     # 每 6 小时一次，与 ETL 的整点错开
@@ -9,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       minutes:
-        description: '本次运行的音频分钟上限（每日总量另有 200 分钟硬顶）'
+        description: '本次运行的音频分钟上限（90 分钟约 $0.54）'
         required: false
         default: '90'
 
@@ -49,9 +53,10 @@ jobs:
           CF_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           CF_API_TOKEN: ${{ secrets.R2_API_TOKEN }}
           R2_BUCKET: ${{ vars.R2_BUCKET || 'news-pwa' }}
-          # 单次上限；每日总量由 TRANSCRIBE_DAILY_CAP 按 UTC 天记账强制
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          TRANSCRIBE_BACKEND: openrouter
+          # 花钱的后端唯一的刹车：一天四次 cron，最多 4 × 90 分钟 ≈ $2.2
           TRANSCRIBE_MINUTES: ${{ github.event.inputs.minutes || '90' }}
-          TRANSCRIBE_DAILY_CAP: '200'
         run: npm run transcribe
 
       - name: Summary

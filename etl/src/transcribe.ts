@@ -33,7 +33,15 @@ const BACKEND: Backend = (process.env.TRANSCRIBE_BACKEND ?? 'cf') in BACKENDS
 /** 只有 Workers AI 这条路要限额度记账 */
 const CF = BACKEND === 'cf';
 const DAILY_CAP = parseInt(process.env.TRANSCRIBE_DAILY_CAP ?? '200', 10);
-const RUN_BUDGET = parseInt(process.env.TRANSCRIBE_MINUTES ?? (CF ? '90' : '100000'), 10);
+/**
+ * 单次运行的音频分钟上限。
+ * local 是自家显卡，跑多久都不花钱，所以不设实际上限；
+ * cf 和 openrouter 都要卡住：前者是免费额度，后者是真金白银
+ * （whisper-1 $0.006/分钟，90 分钟约 $0.54，一天四次封顶约 $2）。
+ */
+const RUN_BUDGET = parseInt(process.env.TRANSCRIBE_MINUTES ?? (BACKEND === 'local' ? '100000' : '90'), 10);
+/** whisper-1 的实际单价，只用来在日志里把花销说明白 */
+const USD_PER_MIN = 0.006;
 const MAX_ATTEMPTS = 3;
 /** 撞到额度后等多久再试。比 cron 间隔略短，保证每次定时都会真的探一下 */
 const QUOTA_BACKOFF_MS = 3 * 60 * 60 * 1000;
@@ -144,7 +152,9 @@ async function main(): Promise<void> {
     `[start] 后端 ${BACKEND} | 队列 ${queue.tasks.length} 条，可处理 ${pending.length} 条 | ` +
       (CF
         ? `本次额度 ${budget} 分钟（单次上限 ${RUN_BUDGET}，今日已用 ${usedToday}/${DAILY_CAP}）`
-        : `本次上限 ${budget} 分钟（不占 Workers AI 额度）`),
+        : BACKEND === 'openrouter'
+          ? `本次上限 ${budget} 分钟（最多花 $${(budget * USD_PER_MIN).toFixed(2)}）`
+          : `本次上限 ${budget} 分钟（本地跑，不花钱）`),
   );
   if (!pending.length) {
     console.log('[done] 队列为空');
@@ -243,6 +253,7 @@ async function main(): Promise<void> {
     `[done] 转写 ${done.size} 条，放弃 ${dropped} 条，剩余 ${remaining.length} 条，` +
       `本次 ${usedMinutes} 分钟音频，` +
       (CF ? `今日累计 ${usedToday + usedMinutes}/${DAILY_CAP}，` : '') +
+      (BACKEND === 'openrouter' ? `本次花费约 $${(usedMinutes * USD_PER_MIN).toFixed(2)}，` : '') +
       `用时 ${((Date.now() - startedAt) / 1000).toFixed(0)}s`,
   );
 }

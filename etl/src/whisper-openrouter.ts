@@ -9,26 +9,36 @@ import { QuotaExceededError, type Segment, type Transcription } from './whisper.
  * 本地 GPU 又要求机器开着。OpenRouter 跑在 Actions 上，定时任务照常执行，
  * 跟用户的机器开不开机无关，代价是按量付费。
  *
- * 模型默认 whisper-large-v3-turbo，跟本地和 Workers AI 是同一个模型，
- * 三条路产出的逐字稿质量一致，不会出现"哪天转的决定了读起来什么样"。
+ * 模型选 whisper-1（$0.006/音频分钟 = $0.36/小时），实测下来唯一能用的。
+ * 2026-09-03 拿硅谷101 E250 的真实 5 分钟切片把候选全打了一遍：
  *
- * 供应商必须钉死：OpenRouter 默认按价格路由，turbo 最便宜的是 DeepInfra，
- * 而 **verbose_json 只有 OpenAI 兼容供应商（OpenAI / Groq / Together）支持，
- * 别家直接 400**。没有 verbose_json 就没有段级时间戳，阅读页里
- * "点段落跳到音频对应位置"就废了，只剩一坨纯文本。
- * Groq 还额外支持 prompt 透传，中文标点全靠它。
+ *   模型                        标点/字数   时间戳   单价
+ *   whisper-1 @ OpenAI          99/1588     有       $0.360/h
+ *   whisper-large-v3-turbo      16/1508     有       $0.012/h
+ *   whisper-large-v3 @ Groq      0/1390     有       $0.090/h
+ *   whisper-large-v3 @ Together  0/1541     有       $0.111/h
+ *   voxtral / qwen3-asr / gpt-4o-transcribe → 400，只有 whisper 系支持 verbose_json
+ *
+ * 三条反直觉的实测结论，别再重新试一遍：
+ *
+ * 1. 供应商钉不住。STT 的 provider 字段只有 options（按供应商透传参数），
+ *    没有 order/only；写了 only 也是静默忽略，永远路由到最便宜的那家。
+ *    turbo 的三次请求（裸跑 / only:groq / only:together）产出逐字节相同、
+ *    计费都是 $0.012/h（DeepInfra 的价），证明 only 没有生效。
+ *    模型名后缀 `model@groq` 直接 400 "does not exist"。
+ * 2. prompt 透传没用，加不加引导词输出完全一样。
+ * 3. 中文标点的真正来源是前文条件化（本地那条路已经证过一次），
+ *    而开放权重的那几家托管都关了它，所以整篇几乎没有标点，没法读。
+ *    whisper-1 是 OpenAI 自家推理，标点密度约每 16 字一个，比本机跑出来的还密。
+ *
+ * 所以贵 30 倍的 whisper-1 是唯一选择。中文播客月产约 19 小时 ≈ $7/月。
+ *
+ * verbose_json 是硬要求：没有它就没有段级时间戳，
+ * 阅读页里"点段落跳到音频对应位置"整个废掉，只剩一坨纯文本。
  */
 
 const ENDPOINT = 'https://openrouter.ai/api/v1/audio/transcriptions';
-const MODEL = process.env.OPENROUTER_STT_MODEL ?? 'openai/whisper-large-v3-turbo';
-/** 供应商 slug，必须是 OpenAI 兼容的那几家，否则 verbose_json 被 400 */
-const PROVIDER = process.env.OPENROUTER_STT_PROVIDER ?? 'groq';
-
-/** 与 whisper.ts / whisper_local.py 保持同一段引导词 */
-const INITIAL_PROMPT: Record<string, string> = {
-  zh: '以下是一段普通话播客对话的文字记录，使用标准中文标点符号。比如：这个问题我们先放一放，等会儿再聊。你觉得呢？对，我同意。',
-  en: '',
-};
+const MODEL = process.env.OPENROUTER_STT_MODEL ?? 'openai/whisper-1';
 
 function apiKey(): string {
   return process.env.OPENROUTER_API_KEY ?? '';
@@ -64,16 +74,9 @@ async function callOpenRouter(mp3: Buffer, lang: 'zh' | 'en'): Promise<ChunkResu
         model: MODEL,
         input_audio: { data: mp3.toString('base64'), format: 'mp3' },
         language: lang,
-        // 没有它就拿不到 segments，前端的音频跳转就废了
         response_format: 'verbose_json',
         timestamp_granularities: ['segment'],
         temperature: 0,
-        provider: {
-          // 只有匹配到的供应商的选项会被转发，其余静默丢弃，所以多写无害
-          options: INITIAL_PROMPT[lang]
-            ? { [PROVIDER]: { prompt: INITIAL_PROMPT[lang] } }
-            : {},
-        },
       }),
       signal: ctrl.signal,
     });
@@ -84,12 +87,12 @@ async function callOpenRouter(mp3: Buffer, lang: 'zh' | 'en'): Promise<ChunkResu
       // 402 是余额不够，跟这条音频无关：立刻收工，不该记到任务头上，
       // 也不该继续拿剩下的任务去撞同一堵墙
       if (res.status === 402 || /insufficient|credit|quota/i.test(msg)) {
-        throw new QuotaExceededError(`OpenRouter 余额不足或额度用尽：${msg}`);
+        throw new QuotaExceededError(`OpenRouter 余额不足：${msg}`);
       }
-      if (res.status === 400 && /verbose|format/i.test(msg)) {
+      if (res.status === 400 && /verbose_json|response_format/i.test(msg)) {
         throw new Error(
-          `供应商不支持 verbose_json（拿不到时间戳）：${msg}\n` +
-            `  把 OPENROUTER_STT_PROVIDER 换成 groq/openai/together，或改用 OPENROUTER_STT_MODEL=openai/whisper-1`,
+          `${MODEL} 不支持 verbose_json，拿不到时间戳，音频跳转会废掉：${msg}\n` +
+            `  只有 whisper 系支持，把 OPENROUTER_STT_MODEL 换回 openai/whisper-1`,
         );
       }
       throw new Error(`OpenRouter HTTP ${res.status}: ${msg}`);
@@ -131,13 +134,12 @@ export async function transcribeAudio(
       const offset = i * CHUNK_SECONDS;
       const r = await callOpenRouter(buf, lang);
 
-      // 第一片就没时间戳，说明这个模型/供应商组合根本不返回 segments。
-      // 后面十几片必然一样，继续跑只会花钱换一份不能跳转的残废逐字稿，
-      // 所以立刻炸掉，把原因说清楚。
+      // 第一片就没时间戳，说明这个模型根本不返回 segments。
+      // 后面十几片必然一样，继续跑只是花钱换一份不能跳转的残废逐字稿。
       if (i === 0 && r.text && !r.segments.length) {
         throw new Error(
-          `${MODEL}@${PROVIDER} 没有返回段级时间戳，逐字稿无法与音频对齐。` +
-            `换 OpenAI 兼容供应商（groq/openai/together）再试。`,
+          `${MODEL} 没有返回段级时间戳，逐字稿无法与音频对齐。` +
+            `跑 scripts/probe-openrouter.ts 换个模型再试。`,
         );
       }
 
@@ -152,7 +154,7 @@ export async function transcribeAudio(
     const text = texts.join('\n').trim();
     if (!text) throw new Error('转写结果为空');
     console.log(
-      `  [openrouter] ${MODEL}@${PROVIDER} ${chunked.parts.length} 片，` +
+      `  [openrouter] ${MODEL} ${chunked.parts.length} 片，` +
         `${Math.round(duration / 60)} 分钟，花费 $${cost.toFixed(4)}`,
     );
 
