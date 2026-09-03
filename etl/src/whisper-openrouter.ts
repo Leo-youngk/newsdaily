@@ -9,36 +9,44 @@ import { QuotaExceededError, type Segment, type Transcription } from './whisper.
  * 本地 GPU 又要求机器开着。OpenRouter 跑在 Actions 上，定时任务照常执行，
  * 跟用户的机器开不开机无关，代价是按量付费。
  *
- * 模型选 whisper-1（$0.006/音频分钟 = $0.36/小时），实测下来唯一能用的。
- * 2026-09-03 拿硅谷101 E250 的真实 5 分钟切片把候选全打了一遍：
+ * 模型选 qwen3-asr-1.7b（$0.027/音频小时）。2026-09-03 拿硅谷101 E250
+ * **访谈中段**的真实 5 分钟切片把 19 个候选全打了一遍，结果：
  *
- *   模型                        标点/字数   时间戳   单价
- *   whisper-1 @ OpenAI          99/1588     有       $0.360/h
- *   whisper-large-v3-turbo      16/1508     有       $0.012/h
- *   whisper-large-v3 @ Groq      0/1390     有       $0.090/h
- *   whisper-large-v3 @ Together  0/1541     有       $0.111/h
- *   voxtral / qwen3-asr / gpt-4o-transcribe → 400，只有 whisper 系支持 verbose_json
+ *   模型                        $/音频小时  中文标点    段时间戳   术语命中(满分68)
+ *   qwen/qwen3-asr-1.7b           0.027    每 13 字    每 27 秒        58
+ *   qwen/qwen3-asr-0.6b           0.012    每 14 字    每 27 秒        58
+ *   openai/gpt-4o-mini-transcribe 0.129    每 15 字      无            58
+ *   openai/gpt-transcribe         0.271    每 14 字      无            64
+ *   microsoft/mai-transcribe-1.5  0.361    每 13 字      无            65
+ *   openai/whisper-1              0.360    无，用空格   每 2 秒        68
+ *   whisper-large-v3-turbo        0.012    完全没有     每 2 秒        —
+ *   whisper-large-v3              0.027    完全没有     每 2 秒        —
+ *   nvidia/nemotron-3.5-asr       0.012    每 18 字      —             25
+ *   deepgram/nova-3 / voxtral     0.26/0.18  完全没有    —             50/62
+ *
+ * 术语命中 = 这 5 分钟里「莫德纳/mRNA/PD-1/新抗原/肿瘤疫苗…」被听对的次数。
+ * qwen 输掉的那 10 分几乎全在专名（把「莫德纳」听成「我这俩」），
+ * 但便宜 13 倍，而且给的是真标点而不是空格，读起来比 whisper-1 还顺。
  *
  * 三条反直觉的实测结论，别再重新试一遍：
  *
  * 1. 供应商钉不住。STT 的 provider 字段只有 options（按供应商透传参数），
- *    没有 order/only；写了 only 也是静默忽略，永远路由到最便宜的那家。
- *    turbo 的三次请求（裸跑 / only:groq / only:together）产出逐字节相同、
- *    计费都是 $0.012/h（DeepInfra 的价），证明 only 没有生效。
- *    模型名后缀 `model@groq` 直接 400 "does not exist"。
- * 2. prompt 透传没用，加不加引导词输出完全一样。
- * 3. 中文标点的真正来源是前文条件化（本地那条路已经证过一次），
- *    而开放权重的那几家托管都关了它，所以整篇几乎没有标点，没法读。
- *    whisper-1 是 OpenAI 自家推理，标点密度约每 16 字一个，比本机跑出来的还密。
- *
- * 所以贵 30 倍的 whisper-1 是唯一选择。中文播客月产约 19 小时 ≈ $7/月。
+ *    没有 order/only；写了 only 也是静默忽略。turbo 三次请求
+ *    （裸跑 / only:groq / only:together）产出逐字节相同、计费都是
+ *    最便宜那家的价。模型名后缀 `model@groq` 直接 400 "does not exist"。
+ * 2. prompt 透传无效，加不加引导词输出完全一样。
+ * 3. whisper 系转中文对话时一个标点都不给（跟模型、供应商、切片长度都无关，
+ *    同一段音频切 300 秒和切 5×60 秒产出逐字节相同）。只有 OpenAI 自家的
+ *    whisper-1 会用空格标短语边界，开放权重的托管连空格都没有，是一堵墙。
+ *    qwen3-asr 不走 whisper 那套，直接输出带标点的中文。
  *
  * verbose_json 是硬要求：没有它就没有段级时间戳，
- * 阅读页里"点段落跳到音频对应位置"整个废掉，只剩一坨纯文本。
+ * 阅读页里"点段落跳到音频对应位置"整个废掉。支持的模型不多，
+ * gpt-transcribe / gpt-4o-mini-transcribe / mai-transcribe / chirp-3 都是 400。
  */
 
 const ENDPOINT = 'https://openrouter.ai/api/v1/audio/transcriptions';
-const MODEL = process.env.OPENROUTER_STT_MODEL ?? 'openai/whisper-1';
+const MODEL = process.env.OPENROUTER_STT_MODEL ?? 'qwen/qwen3-asr-1.7b';
 
 function apiKey(): string {
   return process.env.OPENROUTER_API_KEY ?? '';
@@ -92,7 +100,7 @@ async function callOpenRouter(mp3: Buffer, lang: 'zh' | 'en'): Promise<ChunkResu
       if (res.status === 400 && /verbose_json|response_format/i.test(msg)) {
         throw new Error(
           `${MODEL} 不支持 verbose_json，拿不到时间戳，音频跳转会废掉：${msg}\n` +
-            `  只有 whisper 系支持，把 OPENROUTER_STT_MODEL 换回 openai/whisper-1`,
+            `  跑 scripts/probe-openrouter.ts 看哪些模型支持，或换回 qwen/qwen3-asr-1.7b`,
         );
       }
       throw new Error(`OpenRouter HTTP ${res.status}: ${msg}`);

@@ -36,12 +36,13 @@ const DAILY_CAP = parseInt(process.env.TRANSCRIBE_DAILY_CAP ?? '200', 10);
 /**
  * 单次运行的音频分钟上限。
  * local 是自家显卡，跑多久都不花钱，所以不设实际上限；
- * cf 和 openrouter 都要卡住：前者是免费额度，后者是真金白银
- * （whisper-1 $0.006/分钟，90 分钟约 $0.54，一天四次封顶约 $2）。
+ * cf 和 openrouter 都要卡住：前者是免费额度，后者是真金白银。
+ * qwen3-asr-1.7b 便宜到 240 分钟才 $0.11，一天四次封顶不到 $0.5，
+ * 上限留着是防跑飞，正常永远碰不到。
  */
-const RUN_BUDGET = parseInt(process.env.TRANSCRIBE_MINUTES ?? (BACKEND === 'local' ? '100000' : '90'), 10);
-/** whisper-1 的实际单价，只用来在日志里把花销说明白 */
-const USD_PER_MIN = 0.006;
+const RUN_BUDGET = parseInt(process.env.TRANSCRIBE_MINUTES ?? (BACKEND === 'local' ? '100000' : '240'), 10);
+/** qwen3-asr-1.7b 的实际单价（$0.027/音频小时），只用来在日志里把花销说明白 */
+const USD_PER_MIN = 0.027 / 60;
 const MAX_ATTEMPTS = 3;
 /** 撞到额度后等多久再试。比 cron 间隔略短，保证每次定时都会真的探一下 */
 const QUOTA_BACKOFF_MS = 3 * 60 * 60 * 1000;

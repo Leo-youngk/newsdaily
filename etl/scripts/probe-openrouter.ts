@@ -20,10 +20,11 @@ import { fetchUrl } from '../src/fetch.js';
  */
 
 const CANDIDATES: { model: string; provider: string }[] = [
+  { model: 'qwen/qwen3-asr-1.7b', provider: 'alibaba' },
+  { model: 'qwen/qwen3-asr-0.6b', provider: 'alibaba' },
   { model: 'openai/whisper-1', provider: 'openai' },
-  { model: 'openai/whisper-large-v3-turbo', provider: 'groq' },
-  { model: 'openai/whisper-large-v3', provider: 'groq' },
-  { model: 'openai/whisper-large-v3', provider: 'together' },
+  { model: 'openai/gpt-4o-mini-transcribe', provider: 'openai' },
+  { model: 'microsoft/mai-transcribe-1.5', provider: 'microsoft' },
 ];
 
 const PROMPT_ZH =
@@ -32,7 +33,12 @@ const PROMPT_ZH =
 const CJK = /[\u3400-\u4dbf\u4e00-\u9fff]/g;
 const PUNCT = /[，。？！：；、,.?!;:]/g;
 
-async function probe(mp3: Buffer, model: string, provider: string) {
+async function probe(
+  mp3: Buffer,
+  model: string,
+  provider: string,
+  format: 'verbose_json' | 'json' = 'verbose_json',
+): Promise<void> {
   const t0 = Date.now();
   const res = await fetch('https://openrouter.ai/api/v1/audio/transcriptions', {
     method: 'POST',
@@ -46,8 +52,8 @@ async function probe(mp3: Buffer, model: string, provider: string) {
       model,
       input_audio: { data: mp3.toString('base64'), format: 'mp3' },
       language: 'zh',
-      response_format: 'verbose_json',
-      timestamp_granularities: ['segment'],
+      response_format: format,
+      ...(format === 'verbose_json' ? { timestamp_granularities: ['segment'] } : {}),
       temperature: 0,
       // 实测 provider 只有 options 生效、且 prompt 透传无效，
       // 这里保留只是为了让"换供应商试试"这条路一眼能试
@@ -58,7 +64,14 @@ async function probe(mp3: Buffer, model: string, provider: string) {
   const secs = ((Date.now() - t0) / 1000).toFixed(1);
 
   if (!res.ok) {
-    console.log(`  ✗ HTTP ${res.status} (${secs}s) ${JSON.stringify(j?.error ?? j).slice(0, 200)}`);
+    const msg = JSON.stringify(j?.error ?? j).slice(0, 160);
+    // 不支持 verbose_json 的模型退一步用 json 再测一次：
+    // 它们仍然可能是好模型，只是拿不到时间戳，值得知道文字质量如何
+    if (/verbose_json/.test(msg)) {
+      console.log(`  ! 不支持 verbose_json（没有时间戳，音频跳转会废）——改用 json 重测`);
+      return probe(mp3, model, provider, 'json');
+    }
+    console.log(`  ✗ HTTP ${res.status} (${secs}s) ${msg}`);
     return;
   }
   const text = String(j.text ?? '');
@@ -71,7 +84,7 @@ async function probe(mp3: Buffer, model: string, provider: string) {
     }% | 标点 ${punct} | segments ${segs} | \$${(Number(j.usage?.cost) || 0).toFixed(5)}` +
       ` | 实际供应商 ${j.provider ?? res.headers.get('x-or-provider') ?? '?'}`,
   );
-  if (!segs) console.log('    ↑ 没有时间戳，音频跳转会废掉，不能用');
+  if (!segs && format === 'verbose_json') console.log('    ↑ 没有时间戳，音频跳转会废掉');
   console.log(`    ${text.slice(0, 90).replace(/\n/g, ' ')}…`);
 }
 
