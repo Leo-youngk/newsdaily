@@ -1,6 +1,6 @@
 import './proxy.js';
 import { config, assertCloudflareCreds } from './config.js';
-import { hasFfmpeg, segmentsToHtml, transcribeAudio } from './whisper.js';
+import { QuotaExceededError, hasFfmpeg, segmentsToHtml, transcribeAudio } from './whisper.js';
 import { readingMinutes } from './util.js';
 import * as store from './upload.js';
 import type { Item, ItemDetail, TranscribeQueue } from './types.js';
@@ -138,6 +138,7 @@ async function main(): Promise<void> {
   pending.sort((a, b) => a.enqueuedAt - b.enqueuedAt);
 
   let usedMinutes = 0;
+  let quotaHit = false;
   const done = new Set<string>();
   const completed: Completed[] = [];
   const startedAt = Date.now();
@@ -176,6 +177,14 @@ async function main(): Promise<void> {
           `本次 ${usedMinutes}/${budget}，今日 ${usedToday + usedMinutes}/${DAILY_CAP}`,
       );
     } catch (err) {
+      // 额度耗尽不是这条任务的问题：立刻收工，不累加 attempts，
+      // 否则一次配额用尽会把队列里所有任务的重试次数一起消耗掉
+      if (err instanceof QuotaExceededError) {
+        quotaHit = true;
+        console.warn(`[quota] ${err.message.slice(0, 120)}`);
+        console.warn('[quota] 本次提前结束，剩余任务留到额度重置后');
+        break;
+      }
       const msg = err instanceof Error ? err.message : String(err);
       task.attempts += 1;
       task.lastError = msg;
@@ -192,7 +201,12 @@ async function main(): Promise<void> {
   await store.writeQueue({
     updatedAt: Date.now(),
     tasks: remaining,
-    usage: { utcDate: today, minutes: usedToday + usedMinutes },
+    usage: {
+      utcDate: today,
+      // 撞到 429 说明 Cloudflare 侧已经见底，直接把本地账记满，
+      // 免得同一天后面几次运行继续白撞
+      minutes: quotaHit ? DAILY_CAP : usedToday + usedMinutes,
+    },
   });
 
   console.log(

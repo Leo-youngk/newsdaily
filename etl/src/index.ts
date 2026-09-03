@@ -148,10 +148,20 @@ async function resolveContent(
     if (t) return { html: t.html, text: t.text, source: t.source };
   }
 
-  // 3) 没有任何现成文字稿的播客：入队等 whisper 转写，不在这里阻塞采集
+  // 3) 没有任何现成文字稿的播客
   if (s.readable === 'transcribe') {
-    if (entry.audioUrl) return { html: '', text: '', source: 'pending-transcript' };
-    return { html: '', text: '', source: 'none' };
+    if (!entry.audioUrl) return { html: '', text: '', source: 'none' };
+    // 先看是不是已经转写过了。不查的话，每次采集都会把已完成的集数
+    // 重新标成待转写并再次入队，反复白烧 Workers AI 额度。
+    const existing = await store.readDetail(md5(s.id + (entry.guid || url)));
+    if (existing?.contentText) {
+      return {
+        html: existing.contentHtml,
+        text: existing.contentText,
+        source: 'transcript-whisper',
+      };
+    }
+    return { html: '', text: '', source: 'pending-transcript' };
   }
 
   // 4) 兜底：抓原文页做正文提取（readable=extract 的主路径，也是前两条的降级）
@@ -358,7 +368,11 @@ async function cleanup(retainedShards: string[], cutoffMs: number): Promise<void
   for (const date of retainedShards) {
     const items = await store.readItems(date).catch(() => [] as Item[]);
     for (const it of items) {
-      if (it.contentLen > 0) keepDetail.add(it.id);
+      // 只要条目还在保留期内的分片里，它的 detail 就一律保留。
+      // 原来用 contentLen > 0 作判据，结果上游一旦把条目误标成
+      // contentLen=0（例如已转写的播客被重新标成待转写），
+      // 这里就会把转写好的正文删掉 —— 那是花了额度、不可再生的东西。
+      keepDetail.add(it.id);
       if (it.image) keepImg.add(it.image.replace(config.imgBase, ''));
     }
   }
@@ -517,6 +531,9 @@ async function main(): Promise<void> {
       await store.writeQueue({
         updatedAt: Date.now(),
         tasks: [...queue.tasks, ...newTasks],
+        // 必须原样带回：这里漏掉 usage 会把转写侧的当日额度记账清零，
+        // 采集每 2 小时跑一次，等于额度限制形同虚设
+        usage: queue.usage,
       });
     }
     if (newTasks.length) {

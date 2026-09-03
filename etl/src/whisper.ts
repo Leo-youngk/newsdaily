@@ -19,6 +19,14 @@ const MODEL = '@cf/openai/whisper-large-v3-turbo';
 /** 每片 5 分钟：16kHz 单声道 32kbps mp3 约 1.2MB，base64 后 1.6MB，请求体很安全 */
 const CHUNK_SECONDS = 300;
 
+/** 额度耗尽。与普通失败区分开：不该记到任务头上，也不该继续试下一条。 */
+export class QuotaExceededError extends Error {
+  constructor(msg: string) {
+    super(msg);
+    this.name = 'QuotaExceededError';
+  }
+}
+
 export interface Segment {
   start: number;
   end: number;
@@ -93,6 +101,9 @@ async function callWhisper(
     const json = (await res.json().catch(() => ({}))) as any;
     if (!res.ok || !json?.result) {
       const msg = JSON.stringify(json?.errors ?? json).slice(0, 200);
+      if (res.status === 429 || /free allocation|neurons/i.test(msg)) {
+        throw new QuotaExceededError(`Workers AI 额度耗尽：${msg}`);
+      }
       throw new Error(`whisper HTTP ${res.status}: ${msg}`);
     }
     const r = json.result;
