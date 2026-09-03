@@ -54,13 +54,18 @@ function run(cmd: string, args: string[]): Promise<{ code: number; stderr: strin
   });
 }
 
-export async function hasFfmpeg(): Promise<boolean> {
+async function hasFfmpeg(): Promise<boolean> {
   try {
     const { code } = await run('ffmpeg', ['-version']);
     return code === 0;
   } catch {
     return false;
   }
+}
+
+/** 环境自检，返回错误说明；null 表示可用。与 whisper-local.ts 同构。 */
+export async function checkEnv(): Promise<string | null> {
+  return (await hasFfmpeg()) ? null : '需要 ffmpeg 做切片，请先安装';
 }
 
 /**

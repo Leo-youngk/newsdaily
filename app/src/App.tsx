@@ -38,7 +38,12 @@ export default function App() {
   const { categories, counts } = useMemo(() => {
     const counts: Record<string, number> = { [ALL]: news.items.length };
     for (const it of news.items) counts[it.category] = (counts[it.category] ?? 0) + 1;
-    const order = (prefs.getCategoryOrder() ?? CATEGORIES) as string[];
+    // localStorage 里存的是用户上次的顺序，可能还是旧版分类；
+    // 新增的分类必须补进去，否则新内容永远不出现在分类栏里
+    const saved = prefs.getCategoryOrder();
+    const order = saved?.length
+      ? [...saved, ...CATEGORIES.filter((c) => !saved.includes(c))]
+      : (CATEGORIES as string[]);
     const cats = [ALL, ...order.filter((c) => c !== ALL && counts[c])];
     for (const c of Object.keys(counts)) if (c !== ALL && !cats.includes(c)) cats.push(c);
     return { categories: cats, counts };

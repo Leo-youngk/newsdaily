@@ -27,6 +27,8 @@ const CATEGORY_DOT: Record<string, string> = {
   AI: '#7c6bb0',
   科技: '#4a7ba6',
   商业: '#b08a3e',
+  创业: '#a85f6f',
+  人文: '#7d8a5c',
   思想: '#5a9178',
 };
 

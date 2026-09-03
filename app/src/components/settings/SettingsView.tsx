@@ -17,8 +17,10 @@ const CATEGORY_HINT: Record<Category, string> = {
   访谈: '长对话逐字稿：80,000 Hours、Dwarkesh、Lex Fridman 等',
   AI: 'AI 研究与工程：Latent Space、Import AI、机器之心等',
   科技: '科技产业与深度报道：ChinaTalk、MIT TR、Asianometry',
-  商业: '商业与经济：The Diff、Noahpinion、财新',
-  思想: '观点与叙事：Astral Codex Ten、One Useful Thing',
+  商业: '商业与经济：The Diff、Noahpinion、财新、Stratechery',
+  创业: '创业者与产品视角：Not Boring、Lenny’s Newsletter',
+  人文: '人物传记与非虚构：人物、The New Yorker、Age of Invention',
+  思想: '哲学与观点：Aeon、The Marginalian、Astral Codex Ten',
 };
 
 export default function SettingsView({ items, density, sort, onDensity, onSort }: Props) {

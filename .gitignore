@@ -23,3 +23,6 @@ Thumbs.db
 # 本地联调产物
 app/public/data/
 .env.local
+
+# 本地转写用的 python 环境
+.venv-whisper/

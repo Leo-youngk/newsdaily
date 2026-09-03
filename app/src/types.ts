@@ -1,8 +1,8 @@
 // 与 etl/src/types.ts 保持一致的数据契约
 
-export type Category = '访谈' | 'AI' | '科技' | '商业' | '思想';
+export type Category = '访谈' | 'AI' | '科技' | '商业' | '创业' | '人文' | '思想';
 
-export const CATEGORIES: Category[] = ['访谈', 'AI', '科技', '商业', '思想'];
+export const CATEGORIES: Category[] = ['访谈', 'AI', '科技', '商业', '创业', '人文', '思想'];
 
 export type Lang = 'zh' | 'en';
 

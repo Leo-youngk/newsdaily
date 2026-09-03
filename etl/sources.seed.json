@@ -1,11 +1,13 @@
 {
-  "version": 2,
+  "version": 3,
   "updatedAt": 0,
   "categories": {
     "访谈": true,
     "AI": true,
     "科技": true,
     "商业": true,
+    "创业": true,
+    "人文": true,
     "思想": true
   },
   "settings": {
@@ -13,7 +15,15 @@
     "sort": "time",
     "darkMode": "system",
     "autoTranslate": false,
-    "categoryOrder": ["访谈", "AI", "科技", "商业", "思想"]
+    "categoryOrder": [
+      "访谈",
+      "AI",
+      "科技",
+      "商业",
+      "创业",
+      "人文",
+      "思想"
+    ]
   },
   "sources": [
     {
@@ -103,7 +113,6 @@
       "expectedDomain": "thisamericanlife.org",
       "note": "叙事纪实，文稿页 /{期号}/transcript"
     },
-
     {
       "id": "latentspace",
       "name": "Latent Space",
@@ -180,7 +189,6 @@
       "minChars": 3000,
       "note": "微信公众号中继，全文中位 3.4 万字符。官方 jiqizhixin.com/rss 已损坏，用这个替代"
     },
-
     {
       "id": "chinatalk",
       "name": "ChinaTalk",
@@ -219,7 +227,6 @@
       "minChars": 5000,
       "note": "半导体与产业史长文，中位 1.5 万字符，更新低频"
     },
-
     {
       "id": "thediff",
       "name": "The Diff",
@@ -256,7 +263,6 @@
       "minChars": 2000,
       "note": "微信公众号中继，中位 6.7K"
     },
-
     {
       "id": "acx",
       "name": "Astral Codex Ten",
@@ -281,7 +287,6 @@
       "minChars": 4000,
       "note": "Ethan Mollick 谈 AI 与工作方式，中位 1.09 万字符"
     },
-
     {
       "id": "zh-42zhangjing",
       "name": "42章经",
@@ -330,7 +335,6 @@
       "minChars": 8000,
       "note": "小宇宙节目，经公共 RSSHub 实例取得。该实例偶发 503，属于可接受的降级"
     },
-
     {
       "id": "construction-physics",
       "name": "Construction Physics",
@@ -402,6 +406,162 @@
       "limit": 5,
       "minChars": 5000,
       "note": "默认关：创投研究，feed 只给 4.7K 摘要"
+    },
+    {
+      "id": "notboring",
+      "name": "Not Boring",
+      "url": "https://www.notboring.co/feed",
+      "category": "创业",
+      "lang": "en",
+      "readable": "full",
+      "enabled": true,
+      "limit": 4,
+      "minChars": 3000,
+      "note": "feed 自带全文，实测正文中位 13,240 字，是所有候选里最长的"
+    },
+    {
+      "id": "lennys",
+      "name": "Lenny's Newsletter",
+      "url": "https://www.lennysnewsletter.com/feed",
+      "category": "创业",
+      "lang": "en",
+      "readable": "full",
+      "enabled": true,
+      "limit": 4,
+      "minChars": 2500,
+      "note": "产品与创业方法论，实测正文中位 3,940 字"
+    },
+    {
+      "id": "wx-renwu",
+      "name": "人物",
+      "url": "https://plink.anyfeeder.com/weixin/renwumag1980",
+      "category": "人文",
+      "lang": "zh",
+      "readable": "full",
+      "enabled": true,
+      "limit": 5,
+      "minChars": 3000,
+      "note": "中文人物特稿最好的来源，实测单篇 7,927 / 7,224 字全文"
+    },
+    {
+      "id": "ageofinvention",
+      "name": "Age of Invention",
+      "url": "https://www.ageofinvention.xyz/feed",
+      "category": "人文",
+      "lang": "en",
+      "readable": "full",
+      "enabled": true,
+      "limit": 3,
+      "minChars": 5000,
+      "note": "发明家与历史人物传记，实测 19,889 / 57,146 字；更新很慢，最新一篇 2026-03"
+    },
+    {
+      "id": "newyorker",
+      "name": "The New Yorker",
+      "url": "https://www.newyorker.com/feed/everything",
+      "category": "人文",
+      "lang": "en",
+      "readable": "extract",
+      "enabled": true,
+      "limit": 5,
+      "minChars": 3000,
+      "note": "Profiles 人物特稿与长报道；实测抓取 2/3 达标，minChars 用来滤掉抓不全的那类"
+    },
+    {
+      "id": "nautilus",
+      "name": "Nautilus",
+      "url": "https://nautil.us/feed/",
+      "category": "人文",
+      "lang": "en",
+      "readable": "extract",
+      "enabled": true,
+      "limit": 4,
+      "minChars": 2000,
+      "note": "科学人文，实测 3/3 达标（2,265 / 2,268 / 14,600 字）"
+    },
+    {
+      "id": "wx-zhishifenzi",
+      "name": "知识分子",
+      "url": "https://plink.anyfeeder.com/weixin/The-Intellectual",
+      "category": "人文",
+      "lang": "zh",
+      "readable": "full",
+      "enabled": true,
+      "limit": 4,
+      "minChars": 3000,
+      "note": "feed 自带全文，实测正文中位 39,780 字"
+    },
+    {
+      "id": "wx-lifeweek",
+      "name": "三联生活周刊",
+      "url": "https://plink.anyfeeder.com/weixin/lifeweek",
+      "category": "人文",
+      "lang": "zh",
+      "readable": "full",
+      "enabled": true,
+      "limit": 5,
+      "minChars": 2000,
+      "note": "实测全文 2,926 / 3,196 字"
+    },
+    {
+      "id": "aeon",
+      "name": "Aeon Essays",
+      "url": "https://aeon.co/feed.rss",
+      "category": "思想",
+      "lang": "en",
+      "readable": "extract",
+      "enabled": true,
+      "limit": 4,
+      "minChars": 4000,
+      "note": "哲学随笔，实测 3/3 达标（17,205 / 26,206 / 19,427 字），是哲学方向最对口的源"
+    },
+    {
+      "id": "themarginalian",
+      "name": "The Marginalian",
+      "url": "https://www.themarginalian.org/feed/",
+      "category": "思想",
+      "lang": "en",
+      "readable": "full",
+      "enabled": true,
+      "limit": 4,
+      "minChars": 2500,
+      "note": "feed 自带全文，实测正文中位 6,507 字"
+    },
+    {
+      "id": "fsblog",
+      "name": "Farnam Street",
+      "url": "https://fs.blog/feed/",
+      "category": "思想",
+      "lang": "en",
+      "readable": "full",
+      "enabled": false,
+      "limit": 4,
+      "minChars": 2500,
+      "note": "停用：feed 中位 4,586 字是被老文章拉高的假象，近期 5 篇实测只有 586 / 831 / 1,043 / 1,560 / 1,822 字，抓原文页也不会更长。降 minChars 迁就它等于自降深度阅读的标准。"
+    },
+    {
+      "id": "stratechery",
+      "name": "Stratechery",
+      "url": "https://stratechery.com/feed/",
+      "category": "商业",
+      "lang": "en",
+      "readable": "extract",
+      "enabled": true,
+      "limit": 4,
+      "minChars": 2500,
+      "note": "实测 3/3 达标，稳定约 4,050 字（免费部分）"
+    },
+    {
+      "id": "sspai",
+      "name": "少数派",
+      "url": "https://sspai.com/feed",
+      "category": "科技",
+      "lang": "zh",
+      "readable": "extract",
+      "enabled": true,
+      "limit": 5,
+      "minChars": 2000,
+      "note": "实测 3/3 达标（4,430 / 4,327 / 6,530 字）"
     }
   ]
 }

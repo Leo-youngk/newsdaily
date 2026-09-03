@@ -58,6 +58,17 @@ async function loadSeedConfig(): Promise<AppConfig> {
   return JSON.parse(await readFile(p, 'utf8')) as AppConfig;
 }
 
+/** 保留用户已排好的顺序，把种子里新增的分类按种子里的位置补进去 */
+function mergeOrder(user: Category[] | undefined, seed: Category[]): Category[] {
+  if (!user?.length) return seed;
+  const have = new Set(user);
+  const out = [...user];
+  seed.forEach((c, i) => {
+    if (!have.has(c)) out.splice(Math.min(i, out.length), 0, c);
+  });
+  return out;
+}
+
 async function loadConfig(): Promise<AppConfig> {
   const seed = await loadSeedConfig();
   if (process.env.FORCE_SEED === '1') {
@@ -96,7 +107,13 @@ async function loadConfig(): Promise<AppConfig> {
     version: seed.version,
     updatedAt: Date.now(),
     categories: { ...seed.categories, ...(remote.categories ?? {}) },
-    settings: { ...seed.settings, ...(remote.settings ?? {}) },
+    // 分类顺序保留用户排好的，但必须把种子里新增的分类补进去：
+    // remote.settings 会整体盖掉 seed.settings，新分类不补就永远排不进顺序里
+    settings: {
+      ...seed.settings,
+      ...(remote.settings ?? {}),
+      categoryOrder: mergeOrder(remote.settings?.categoryOrder, seed.settings.categoryOrder),
+    },
     sources: [...merged, ...custom],
   };
   console.log(

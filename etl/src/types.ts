@@ -1,9 +1,9 @@
 // 统一数据契约：深度阅读器（长文 / 访谈逐字稿），不是快讯聚合器
 
 /** 内容分类：按"读起来是什么体验"分，而不是按新闻条线分 */
-export type Category = '访谈' | 'AI' | '科技' | '商业' | '思想';
+export type Category = '访谈' | 'AI' | '科技' | '商业' | '创业' | '人文' | '思想';
 
-export const CATEGORIES: Category[] = ['访谈', 'AI', '科技', '商业', '思想'];
+export const CATEGORIES: Category[] = ['访谈', 'AI', '科技', '商业', '创业', '人文', '思想'];
 
 export type Lang = 'zh' | 'en';
 
