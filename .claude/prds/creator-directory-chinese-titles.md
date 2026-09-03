@@ -1,7 +1,7 @@
 ---
 name: creator-directory-chinese-titles
 description: 按节目专栏及真实作者浏览目录，全部英文标题自动中文化
-status: active
+status: completed
 created: 2026-09-03T15:49:34.114523+00:00
 ---
 
@@ -24,3 +24,6 @@ created: 2026-09-03T15:49:34.114523+00:00
 
 ## 不在范围
 不更换框架、云服务或保留周期；不改播客转写管线，不添加登录。
+
+## 交付记录
+2026-09-04：功能已提交推送并部署。前端生产资源 index-BeiSgelk.js，Worker 版本 28af1420-511a-420b-9fee-7800712a4d20。14 项 Worker、9 项 ETL/目录、11 项浏览器回归及三端类型检查和前端构建通过。全部 427 个现存英文标题已由云端 AI 完成翻译，pending=0；后续新增由每分钟 cron 自动补译。作者从真实 RSS 署名归类；缺失署名仍可按节目专栏浏览。当前机器无法直连 workers.dev，因此通过 Cloudflare 管理 API 核对实际持久化产物，并验证生产前端资源。
