@@ -200,20 +200,24 @@ const FULL: Record<string, string> = {
   ',': '，', '.': '。', '?': '？', '!': '！', ':': '：', ';': '；',
 };
 const HALF_AFTER_CJK = new RegExp(`([${CJK}])\\s*([,.?!:;])\\s*`, 'g');
+// 左邻不是汉字、但右邻是汉字的那批：「硅谷101,我是」「MRA,然后」「AI,当时」。
+// 实测占全部标点的 0.7%，而 3,000 / GPT-4.5 / v1.2 的右邻都是数字，不会被误伤。
+const HALF_BEFORE_CJK = new RegExp(`\\s*([,.?!:;])\\s*(?=[${CJK}])`, 'g');
 const SPACE_BETWEEN_CJK = new RegExp(`([${CJK}]) +(?=[${CJK}])`, 'g');
 
 /**
  * 中文逐字稿的标点规范化。
  *
  * whisper 输出的中文里半角标点混着全角（"有些无聊,又有些混沌"），
- * 读起来很脏。只在左边紧挨着汉字时才替换 —— 这样 "GPT-4.5"、"v1.2"、
- * "3,000" 这类不会被误伤，因为它们的左邻是数字或字母而不是汉字。
+ * 读起来很脏。判据是两侧有没有汉字：只要一侧紧挨汉字就转全角 ——
+ * "GPT-4.5"、"v1.2"、"3,000" 两侧都是数字或字母，不会被误伤。
  * 顺带删掉汉字之间多余的空格（同样是 whisper 的常见产物）。
  */
 export function normalizeZhTranscript(t: Transcription): Transcription {
   const fix = (s: string) =>
     s
       .replace(HALF_AFTER_CJK, (_m, c: string, p: string) => c + FULL[p])
+      .replace(HALF_BEFORE_CJK, (_m, p: string) => FULL[p])
       .replace(SPACE_BETWEEN_CJK, '$1');
   return {
     ...t,
