@@ -1,4 +1,42 @@
 import 'node:process';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+/**
+ * 加载本地 .env。
+ *
+ * 以前没有这一步：Actions 上的环境变量由 workflow 注入，跑得好好的，
+ * 但本地必须先在 shell 里手动 export，换个终端就变成「R2 读不到」。
+ * 本地跑转写成为常规操作之后，这个坑必须补上。
+ *
+ * 不引 dotenv：这点需求用不上一个依赖。
+ * 已存在的环境变量优先——Actions 上的真实凭据不能被仓库里的文件盖掉。
+ */
+function loadDotEnv(): void {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  for (const dir of [process.cwd(), path.resolve(here, '..')]) {
+    let raw: string;
+    try {
+      raw = readFileSync(path.join(dir, '.env'), 'utf8');
+    } catch {
+      continue;
+    }
+    for (const line of raw.split(/\r?\n/)) {
+      const m = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
+      if (!m) continue;
+      const key = m[1];
+      if (process.env[key]) continue;
+      let v = m[2].trim();
+      const q = v[0];
+      if (v.length > 1 && (q === '"' || q === "'") && v.endsWith(q)) v = v.slice(1, -1);
+      process.env[key] = v;
+    }
+    return;
+  }
+}
+
+loadDotEnv();
 
 function env(name: string, fallback = ''): string {
   const v = process.env[name];

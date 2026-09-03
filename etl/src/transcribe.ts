@@ -1,6 +1,6 @@
 import './proxy.js';
 import { config, assertCloudflareCreds } from './config.js';
-import { QuotaExceededError, segmentsToHtml } from './whisper.js';
+import { QuotaExceededError, normalizeZhTranscript, segmentsToHtml } from './whisper.js';
 import { readingMinutes } from './util.js';
 import * as store from './upload.js';
 import type { Item, ItemDetail, TranscribeQueue } from './types.js';
@@ -169,7 +169,9 @@ async function main(): Promise<void> {
 
     console.log(`[run] ${task.sourceName} · ${task.title.slice(0, 50)}（约 ${est} 分钟）`);
     try {
-      const t = await backend.transcribeAudio(task.audioUrl, task.lang);
+      const raw = await backend.transcribeAudio(task.audioUrl, task.lang);
+      // 两个后端都过一遍：whisper 的中文输出半角全角混用，不规范化读起来很脏
+      const t = task.lang === 'zh' ? normalizeZhTranscript(raw) : raw;
       const html = segmentsToHtml(t, task.lang);
       const minutes = readingMinutes(t.text, task.lang);
 

@@ -195,6 +195,33 @@ function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+const CJK = '\\u3400-\\u4dbf\\u4e00-\\u9fff';
+const FULL: Record<string, string> = {
+  ',': '，', '.': '。', '?': '？', '!': '！', ':': '：', ';': '；',
+};
+const HALF_AFTER_CJK = new RegExp(`([${CJK}])\\s*([,.?!:;])\\s*`, 'g');
+const SPACE_BETWEEN_CJK = new RegExp(`([${CJK}]) +(?=[${CJK}])`, 'g');
+
+/**
+ * 中文逐字稿的标点规范化。
+ *
+ * whisper 输出的中文里半角标点混着全角（"有些无聊,又有些混沌"），
+ * 读起来很脏。只在左边紧挨着汉字时才替换 —— 这样 "GPT-4.5"、"v1.2"、
+ * "3,000" 这类不会被误伤，因为它们的左邻是数字或字母而不是汉字。
+ * 顺带删掉汉字之间多余的空格（同样是 whisper 的常见产物）。
+ */
+export function normalizeZhTranscript(t: Transcription): Transcription {
+  const fix = (s: string) =>
+    s
+      .replace(HALF_AFTER_CJK, (_m, c: string, p: string) => c + FULL[p])
+      .replace(SPACE_BETWEEN_CJK, '$1');
+  return {
+    ...t,
+    text: fix(t.text),
+    segments: t.segments.map((s) => ({ ...s, text: fix(s.text) })),
+  };
+}
+
 /**
  * 把带时间戳的片段合成可读段落。
  * 每段带 data-t 秒数，前端据此让点击段落跳转到音频对应位置。

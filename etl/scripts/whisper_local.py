@@ -20,8 +20,14 @@ from pathlib import Path
 def _add_cuda_dll_dirs() -> None:
     """Windows 上 ctranslate2 不会自动找到 pip 装的 cuBLAS / cuDNN。
 
-    Linux 靠 RPATH 能找到，Windows 必须显式把 DLL 目录挂进搜索路径，
-    否则加载时报 "Library cublas64_12.dll is not found" 而不是任何有用的错。
+    Linux 靠 RPATH 能找到，Windows 必须显式把 DLL 目录挂进搜索路径。
+
+    两条都要加，缺一不可：
+      - add_dll_directory 只对 Python 自己加载扩展模块时生效；
+      - ctranslate2.dll 在运行时才去拉 cublas64_12.dll，这属于原生 DLL 的
+        传递依赖，走的是 Windows 默认搜索顺序，只认 PATH。
+    只加前者的话，import 和 get_cuda_device_count() 都正常，
+    偏偏在第一次 encode 时才炸 "Library cublas64_12.dll is not found"。
     """
     if os.name != 'nt':
         return
@@ -33,6 +39,7 @@ def _add_cuda_dll_dirs() -> None:
             os.add_dll_directory(str(sub))
         except OSError:
             pass
+        os.environ['PATH'] = str(sub) + os.pathsep + os.environ.get('PATH', '')
 
 
 _add_cuda_dll_dirs()
@@ -67,6 +74,9 @@ def main() -> int:
     ap.add_argument('--lang', default='zh', choices=['zh', 'en'])
     ap.add_argument('--model', default='large-v3-turbo')
     ap.add_argument('--device', default='auto', choices=['auto', 'cuda', 'cpu'])
+    ap.add_argument('--condition', default=1, type=int, help='前文条件化，标点全靠它')
+    ap.add_argument('--no-repeat', dest='no_repeat', default=0, type=int)
+    ap.add_argument('--out', default='', help='写到文件而不是 stdout，便于对比')
     args = ap.parse_args()
 
     device, compute_type = pick_device(args.device)
@@ -84,6 +94,12 @@ def main() -> int:
         else:
             raise
 
+    # 中文转写的标点全靠 prompt 引导，而 initial_prompt 只作用于第一个 30 秒窗口。
+    # 关掉 condition_on_previous_text 之后，后面所有窗口都没有任何 prompt，
+    # 整集会一个标点都没有（实测 11,684 字 / 0 个标点）。
+    # Workers AI 那条路没这个问题，是因为它每 5 分钟切一片、每片重新带 prompt。
+    # 打开前文条件化是标点的来源；复读机风险交给 faster-whisper 自己的
+    # compression_ratio_threshold 与 no_repeat_ngram_size 兜底。
     segments_iter, info = model.transcribe(
         args.audio,
         language=args.lang,
@@ -91,9 +107,10 @@ def main() -> int:
         beam_size=5,
         vad_filter=True,
         initial_prompt=INITIAL_PROMPT.get(args.lang) or None,
-        # 长音频里前文条件化会让模型陷进复读机循环，播客这种一小时起步的
-        # 素材必须关掉，宁可牺牲一点上下文连贯性
-        condition_on_previous_text=False,
+        condition_on_previous_text=args.condition,
+        # 复读时压缩率会飙高，命中就换温度重解这一窗口
+        compression_ratio_threshold=2.4,
+        no_repeat_ngram_size=args.no_repeat,
     )
 
     total = float(info.duration or 0)
@@ -117,7 +134,11 @@ def main() -> int:
         'duration': total,
         'device': device,
     }
-    json.dump(out, sys.stdout, ensure_ascii=False)
+    if args.out:
+        with open(args.out, 'w', encoding='utf-8') as f:
+            json.dump(out, f, ensure_ascii=False)
+    else:
+        json.dump(out, sys.stdout, ensure_ascii=False)
     return 0
 
 
