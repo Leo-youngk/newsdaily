@@ -16,7 +16,6 @@ import {
 export interface Env extends AiEnv {
   NEWS_R2: R2Bucket;
   DB: D1Database;
-  ADMIN_TOKEN?: string;
   /** 允许的前端来源，逗号分隔；留空则只允许同源与无 Origin 的请求 */
   CORS_ORIGIN?: string;
 }
@@ -47,7 +46,7 @@ app.use('/*', async (c, next) => {
       origin && allow.length > 0 && (allow.includes('*') || allow.includes(origin))
         ? origin
         : undefined,
-    allowHeaders: ['Content-Type', 'x-admin-token', 'If-Match'],
+    allowHeaders: ['Content-Type', 'If-Match'],
     exposeHeaders: ['ETag'],
     allowMethods: ['GET', 'POST', 'PUT', 'OPTIONS'],
     maxAge: 86400,
@@ -61,19 +60,6 @@ function contentTypeFor(key: string): string {
   if (key.endsWith('.jpg') || key.endsWith('.jpeg')) return 'image/jpeg';
   if (key.endsWith('.svg')) return 'image/svg+xml';
   return 'application/octet-stream';
-}
-
-/** 写操作与 AI 调用都要求管理令牌。未配置令牌时一律拒绝（fail closed）。 */
-function requireToken(c: { env: Env; req: { header: (k: string) => string | undefined } }):
-  | { ok: true }
-  | { ok: false; status: 401 | 503; error: string } {
-  if (!c.env.ADMIN_TOKEN) {
-    return { ok: false, status: 503, error: '服务端未配置 ADMIN_TOKEN，拒绝服务' };
-  }
-  if (c.req.header('x-admin-token') !== c.env.ADMIN_TOKEN) {
-    return { ok: false, status: 401, error: '未授权' };
-  }
-  return { ok: true };
 }
 
 app.get('/', (c) => c.json({ ok: true, service: 'news-pwa-worker' }));
@@ -159,9 +145,6 @@ async function bodyTextFor(env: Env, id: string): Promise<string | null> {
  * POST /api/ai/summary  { id }
  */
 app.post('/api/ai/summary', async (c) => {
-  const auth = requireToken(c);
-  if (!auth.ok) return c.json({ error: auth.error }, auth.status);
-
   const { id } = await c.req.json<{ id: string }>().catch(() => ({ id: '' }));
   if (!id) return c.json({ error: '缺少 id' }, 400);
 
@@ -196,9 +179,6 @@ app.post('/api/ai/summary', async (c) => {
  * 接入三级容灾翻译降级机制（主模型 -> Workers AI -> Google 翻译）
  */
 app.post('/api/ai/translate', async (c) => {
-  const auth = requireToken(c);
-  if (!auth.ok) return c.json({ error: auth.error }, auth.status);
-
   const { id, text, field } = await c.req
     .json<{ id: string; text?: string; field?: 'title' | 'body' }>()
     .catch(() => ({ id: '', text: undefined, field: undefined }));
@@ -235,8 +215,6 @@ app.post('/api/ai/translate', async (c) => {
 
 /** 长文翻译任务化队列接口 */
 app.post('/api/ai/jobs', async (c) => {
-  const auth = requireToken(c);
-  if (!auth.ok) return c.json({ error: auth.error }, auth.status);
   const payload = (await c.req.json().catch(() => null)) as {
     articleId?: string;
     paragraphs?: ParagraphInput[];
@@ -267,8 +245,6 @@ app.post('/api/ai/jobs', async (c) => {
 });
 
 app.get('/api/ai/jobs/:id', async (c) => {
-  const auth = requireToken(c);
-  if (!auth.ok) return c.json({ error: auth.error }, auth.status);
   const id = c.req.param('id');
   if (!/^[a-f0-9]{64}$/.test(id)) return c.json({ error: '无效任务' }, 400);
   const job = await getTranslationJob(c.env, id);
@@ -277,8 +253,6 @@ app.get('/api/ai/jobs/:id', async (c) => {
 });
 
 app.post('/api/ai/jobs/:id/run', async (c) => {
-  const auth = requireToken(c);
-  if (!auth.ok) return c.json({ error: auth.error }, auth.status);
   const id = c.req.param('id');
   if (!/^[a-f0-9]{64}$/.test(id)) return c.json({ error: '无效任务' }, 400);
   const job = await runTranslationJob(c.env, id);
@@ -299,8 +273,6 @@ app.get('/api/config', async (c) => {
 });
 
 app.put('/api/config', async (c) => {
-  const auth = requireToken(c);
-  if (!auth.ok) return c.json({ error: auth.error }, auth.status);
   const raw = await c.req.text();
   let config: {
     sources?: unknown[];

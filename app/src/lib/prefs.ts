@@ -1,10 +1,9 @@
-// 本地偏好：主题、收藏、已读、管理令牌、显示设置（全部存 localStorage，不占 D1 写额度）
+// 本地偏好：主题、收藏、已读、显示设置（全部存 localStorage，不占 D1 写额度）
 
 const KEY = {
   theme: 'np-theme',
   favorites: 'np-favorites',
   read: 'np-read',
-  adminToken: 'np-admin-token',
   density: 'np-density',
   sort: 'np-sort',
   autoTranslate: 'np-auto-translate',
@@ -106,15 +105,6 @@ export const prefs = {
     } catch {
       // 配额满了就算了，进度不是必须品，不能因此让阅读页崩掉
     }
-  },
-  // 管理令牌（用于 PUT /api/config 与 AI 服务）
-  getAdminToken(): string {
-    return localStorage.getItem(KEY.adminToken) || '';
-  },
-  setAdminToken(token: string): void {
-    token
-      ? localStorage.setItem(KEY.adminToken, token)
-      : localStorage.removeItem(KEY.adminToken);
   },
   // 显示设置
   getDensity(): 'compact' | 'standard' {

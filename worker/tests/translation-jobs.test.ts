@@ -31,7 +31,7 @@ function fixture() {
       objects.set(key, value); return { httpEtag: '"test-etag"' };
     },
   };
-  return { env: { DB, NEWS_R2, AI_MODEL: 'test-primary', AI_FALLBACK_MODEL: 'test-backup', AI_API_KEY: 'test-only-key', ADMIN_TOKEN: 'test-token' } as any, objects, sql, failWrites: () => { failWrites = true; } };
+  return { env: { DB, NEWS_R2, AI_MODEL: 'test-primary', AI_FALLBACK_MODEL: 'test-backup', AI_API_KEY: 'test-only-key' } as any, objects, sql, failWrites: () => { failWrites = true; } };
 }
 const success = (text: string, finish_reason = 'stop') => Response.json({ choices: [{ message: { content: text }, finish_reason }] });
 const realFetch = globalThis.fetch;
@@ -148,16 +148,30 @@ test('主备失败时独立 Workers AI 补全，缓存失败不会重复生成',
   } finally { globalThis.fetch = realFetch; f.sql.close(); }
 });
 
-test('任务接口校验鉴权和重复编号，配置使用 R2 且拒绝旧 ETag', async () => {
+test('无令牌可创建、读取、运行翻译任务和保存配置，仍校验输入及 ETag', async () => {
   const f = fixture(); const ctx = { waitUntil() {} } as any;
-  const req = (path: string, body: any, token = 'test-token') => new Request(`https://test.local${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-admin-token': token }, body: JSON.stringify(body) });
+  const req = (path: string, body: any) => new Request(`https://test.local${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   try {
-    assert.equal((await worker.fetch(req('/api/ai/jobs', {}, ''), f.env, ctx)).status, 401);
+    globalThis.fetch = async () => success('[0] 免令牌译文');
+    const created = await worker.fetch(req('/api/ai/jobs', { articleId: 'test', paragraphs: [{ key: '0', text: 'hello' }] }), f.env, ctx);
+    assert.equal(created.status, 200);
+    const job = await created.json() as { id: string };
+    assert.equal((await worker.fetch(new Request(`https://test.local/api/ai/jobs/${job.id}`), f.env, ctx)).status, 200);
+    const completed = await worker.fetch(req(`/api/ai/jobs/${job.id}/run`, {}), f.env, ctx);
+    assert.equal(completed.status, 200);
+    assert.equal((await completed.json() as { state: string }).state, 'complete');
+    for (const path of ['/api/ai/summary', '/api/ai/translate', '/api/ai/jobs']) {
+      assert.equal((await worker.fetch(req(path, {}), f.env, ctx)).status, 400);
+    }
     assert.equal((await worker.fetch(req('/api/ai/jobs', { articleId: 'test', paragraphs: [{ key: '0', text: 'a' }, { key: '0', text: 'b' }] }), f.env, ctx)).status, 400);
     f.objects.set('config/sources.json', JSON.stringify({ sources: [], settings: {}, categories: {} }));
     const res = await worker.fetch(new Request('https://test.local/api/config'), f.env, ctx);
     assert.equal(res.headers.get('etag'), '"test-etag"'); assert.equal(res.status, 200);
-    const stale = new Request('https://test.local/api/config', { method: 'PUT', headers: { 'x-admin-token': 'test-token', 'If-Match': '"old"' }, body: JSON.stringify({ sources: [], settings: {}, categories: {} }) });
+    const stale = new Request('https://test.local/api/config', { method: 'PUT', headers: { 'If-Match': '"old"' }, body: JSON.stringify({ sources: [], settings: {}, categories: {} }) });
     assert.equal((await worker.fetch(stale, f.env, ctx)).status, 409);
-  } finally { f.sql.close(); }
+    const config = { sources: [], settings: { density: 'compact' }, categories: {} };
+    const saved = await worker.fetch(new Request('https://test.local/api/config', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-Match': '"test-etag"' }, body: JSON.stringify(config) }), f.env, ctx);
+    assert.equal(saved.status, 200);
+    assert.equal(JSON.parse(f.objects.get('config/sources.json')!).settings.density, 'compact');
+  } finally { globalThis.fetch = realFetch; f.sql.close(); }
 });

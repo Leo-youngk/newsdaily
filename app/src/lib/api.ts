@@ -44,13 +44,11 @@ export const dataApi = {
 
 export async function putConfig(
   cfg: import('../types').AppConfig,
-  adminToken: string,
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/config`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
-      'x-admin-token': adminToken,
       ...(configEtag ? { 'If-Match': configEtag } : {}),
     },
     body: JSON.stringify(cfg),

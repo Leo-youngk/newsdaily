@@ -29,19 +29,9 @@ export default function SettingsView({ items, density, sort, onDensity, onSort }
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
-  const [token, setToken] = useState(prefs.getAdminToken());
   const [theme, setTheme] = useState<ThemeMode>(prefs.getTheme());
   const [kwSourceId, setKwSourceId] = useState('');
   const [kwText, setKwText] = useState('');
-  const changeToken = (value: string) => {
-    setToken(value);
-    try {
-      prefs.setAdminToken(value.trim());
-      setMsg({ kind: 'ok', text: '管理令牌已保存在本机' });
-    } catch {
-      setMsg({ kind: 'err', text: '本机存储不可用，令牌未能保存' });
-    }
-  };
 
   useEffect(() => {
     dataApi
@@ -99,20 +89,15 @@ export default function SettingsView({ items, density, sort, onDensity, onSort }
 
   const save = async () => {
     if (!config) return;
-    if (!token.trim()) {
-      setMsg({ kind: 'err', text: '请先填写管理令牌（Worker 的 ADMIN_TOKEN）' });
-      return;
-    }
     setSaving(true);
     setMsg(null);
-    prefs.setAdminToken(token.trim());
     const next: AppConfig = {
       ...config,
       updatedAt: Date.now(),
       settings: { ...config.settings, density, sort },
     };
     try {
-      await putConfig(next, token.trim());
+      await putConfig(next);
       setConfig(next);
       setDirty(false);
       setMsg({ kind: 'ok', text: '已保存到云端，将于下次抓取生效（每 2 小时一次）' });
@@ -133,8 +118,6 @@ export default function SettingsView({ items, density, sort, onDensity, onSort }
   if (!config)
     return <div className="space-y-4 p-6 text-sm text-ink-muted">
       <p>{msg?.text || '无法加载配置，请稍后重新进入设置。'}</p>
-      <label>管理令牌<input className="input mt-2" type="password" value={token} onChange={(e) => changeToken(e.target.value)} /></label>
-      <p>令牌输入后自动保存在本机。</p>
     </div>;
 
   const enabledCount = config.sources.filter(
@@ -231,16 +214,6 @@ export default function SettingsView({ items, density, sort, onDensity, onSort }
           />
         </Field>
 
-        <Field label="管理令牌（保存配置与调用 AI 都需要）">
-          <input
-            className="input font-mono text-xs"
-            type="password"
-            value={token}
-            placeholder="Worker 的 ADMIN_TOKEN"
-            onChange={(e) => changeToken(e.target.value)}
-          />
-          <p className="mt-1 text-xs text-ink-faint">输入后自动保存在本机，不随配置上传。</p>
-        </Field>
       </section>
 
       <div className="sticky bottom-16 z-10 -mx-4 border-t hairline bg-paper/90 px-4 py-3 backdrop-blur dark:bg-[#14130f]/90 sm:mx-0 sm:rounded-2xl sm:border sm:px-5">

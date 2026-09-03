@@ -21,11 +21,11 @@ with sync_playwright() as p:
     def setup(content=html, favorites=None, snapshot=None, fail_shards=False, feed=None, partial=False, dates=None):
         ctx = browser.new_context(viewport={'width':390,'height':844},is_mobile=True,has_touch=True,device_scale_factor=2,service_workers='block')
         state = {'runs':0,'creates':0,'job':None,'fail':fail_shards,'feed':feed or [item,item2],'details':0,'errors':[],'dates':dates or ['2026-09-03']}
-        ctx.add_init_script('localStorage.setItem("np-admin-token", "test-token")')
         if favorites is not None: ctx.add_init_script('localStorage.setItem("np-favorites",'+json.dumps(json.dumps(favorites))+')')
         if snapshot is not None: ctx.add_init_script('localStorage.setItem("np-snapshot",'+json.dumps(json.dumps(snapshot))+')')
         def route(r):
             path = urlparse(r.request.url).path
+            assert 'x-admin-token' not in r.request.headers
             status = 200
             if path == '/data/index/latest.json': value={'dates':state['dates'],'all':['test-a','test-b'],'itemCount':2,'generatedAt':now,'categories':{'AI':['test-a'],'商业':['test-b']}}
             elif path.startswith('/data/items/'):
@@ -35,7 +35,12 @@ with sync_playwright() as p:
             elif path.startswith('/data/detail/'):
                 state['details'] += 1
                 value={**item,'contentHtml':content,'contentText':'Paragraph one Paragraph two Nested quote'}
-            elif path == '/api/config': value=cfg
+            elif path == '/api/config':
+                value=cfg
+                if r.request.method == 'PUT':
+                    assert r.request.headers.get('if-match') == '"test"'
+                    state['saved_config']=r.request.post_data_json
+                    value={'ok':True}
             elif path == '/api/ai/jobs':
                 state['creates'] += 1
                 inputs=r.request.post_data_json['paragraphs']; state['inputs']=inputs
@@ -54,7 +59,7 @@ with sync_playwright() as p:
             r.fulfill(status=status,json=value,headers={'Access-Control-Allow-Origin':'*','ETag':'"test"','Access-Control-Expose-Headers':'ETag'})
         ctx.route('https://news-pwa-worker.if5v.workers.dev/**',route)
         page=ctx.new_page(); page.on('pageerror', lambda err: state['errors'].append(str(err)))
-        page.goto('http://127.0.0.1:5173/'); page.wait_for_load_state('networkidle')
+        page.goto(os.environ.get('TEST_BASE_URL', 'http://127.0.0.1:5173/')); page.wait_for_load_state('networkidle')
         return ctx,page,state
     def open_article(page, title='Test article A'):
         page.get_by_role('link').filter(has=page.get_by_text(title,exact=True)).click()
@@ -99,9 +104,17 @@ with sync_playwright() as p:
 
     ctx,page,state=setup()
     page.locator('nav').last.get_by_role('button',name='设置').click()
-    page.locator('input[type=password]').fill('test-updated-token')
-    assert page.evaluate('localStorage.getItem("np-admin-token")')=='test-updated-token'
-    passed('令牌独立自动保存',state); ctx.close()
+    expect(page.get_by_role('heading',name='显示',exact=True)).to_be_visible()
+    assert page.locator('input[type=password]').count()==0
+    assert page.get_by_text('管理令牌',exact=False).count()==0
+    page.get_by_role('button',name='紧凑',exact=True).click()
+    page.get_by_role('button',name='保存到云端',exact=True).click()
+    expect(page.get_by_text('已保存到云端',exact=False)).to_be_visible()
+    assert state['saved_config']['settings']['density']=='compact'
+    assert page.evaluate('localStorage.getItem("np-admin-token")') is None
+    assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+    page.screenshot(path=str(OUT/'settings-no-token.png'))
+    passed('无令牌保存配置且保留 ETag，iPhone 设置页无横向溢出',state); ctx.close()
 
     ctx,page,state=setup(partial=True)
     open_article(page)

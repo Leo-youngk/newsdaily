@@ -35,7 +35,6 @@
     "CORS_ORIGIN": "https://news-pwa-e1a.pages.dev,https://newsdaily-pti.pages.dev,http://localhost:5173"
   }
   // 需要用 `wrangler secret put` 配置的（不要写进本文件）：
-  //   ADMIN_TOKEN   AI 调用与配置写入的令牌，未配置时 /api/ai/* 与 PUT /api/config 一律 503
   //   AI_BASE_URL   OpenAI 兼容端点
   //   AI_API_KEY
 }
